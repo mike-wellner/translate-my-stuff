@@ -1,0 +1,1241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>translate-my-stuff</title>
+<style>
+:root {
+  --bg: #f5f4f0; --panel: #ffffff; --panel-2: #eeece6; --border: #dcd8ce; --hover: #f0eee8;
+  --text: #1e1c19; --muted: #6c665c; --accent: #2d6bd6; --accent-text: #ffffff; --active: #e3ecfb;
+  --done: #2e8b57; --fuzzy: #c98a00; --todo: #c4473a;
+  --tok-bg: #e4ecfb; --tok-text: #1d4b9e; --warn-bg: #fdf3dc; --warn-text: #7a5500;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #151619; --panel: #1e1f23; --panel-2: #27292e; --border: #35373d; --hover: #25272b;
+    --text: #e8e6e1; --muted: #9a958c; --accent: #5b8ff0; --accent-text: #0d1220; --active: #24314a;
+    --done: #4cb87a; --fuzzy: #e0a82e; --todo: #e06a5c;
+    --tok-bg: #23314c; --tok-text: #a9c4ff; --warn-bg: #3a2f14; --warn-text: #f0cf80;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; margin: 0; }
+body { font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); display: flex; flex-direction: column; }
+button, input, textarea { font: inherit; color: inherit; }
+button { padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel-2); cursor: pointer; }
+button:hover:not(:disabled) { border-color: var(--muted); }
+button:disabled { opacity: .5; cursor: default; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+kbd { font: 11px ui-monospace, Consolas, monospace; padding: 1px 5px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; background: var(--panel); }
+.muted { color: var(--muted); }
+.spacer { flex: 1; }
+
+header.top { display: flex; align-items: center; gap: 10px; padding: 8px 16px; background: var(--panel); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.brand { font-weight: 700; letter-spacing: .2px; }
+.folder { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.save-state { color: var(--muted); font-size: 13px; }
+.save-state.unsaved { color: var(--fuzzy); }
+label.toggle { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; cursor: pointer; user-select: none; }
+
+main { flex: 1; min-height: 0; display: grid; grid-template-columns: 220px minmax(260px, 360px) 1fr; }
+main > section { min-height: 0; overflow: auto; }
+#files { border-right: 1px solid var(--border); background: var(--panel); padding: 10px 8px; }
+#files h2, .pane-title { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 4px 8px 8px; font-weight: 600; }
+.file { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 8px; border-radius: 6px; margin-bottom: 2px; }
+.file:hover { background: var(--hover); }
+.file.active { background: var(--active); }
+.file-name { font-weight: 600; overflow-wrap: anywhere; }
+.file-meta { font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; gap: 6px; }
+.file-dirty { color: var(--fuzzy); }
+.bar { height: 4px; border-radius: 2px; background: var(--panel-2); margin-top: 5px; display: flex; overflow: hidden; }
+.bar > i { display: block; height: 100%; }
+.bar .b-done { background: var(--done); }
+.bar .b-fuzzy { background: var(--fuzzy); }
+
+#entries { border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }
+.entries-tools { padding: 10px; border-bottom: 1px solid var(--border); display: grid; gap: 8px; background: var(--panel); }
+.tabs { display: flex; gap: 2px; background: var(--panel-2); padding: 2px; border-radius: 7px; }
+.tabs button { flex: 1; border: 0; background: none; padding: 4px 4px; font-size: 12px; border-radius: 5px; white-space: nowrap; }
+.tabs button.on { background: var(--panel); box-shadow: 0 1px 2px rgba(0,0,0,.12); font-weight: 600; }
+.tabs .n { color: var(--muted); font-weight: 400; margin-left: 3px; }
+#search { width: 100%; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
+#list { flex: 1; overflow: auto; }
+.row { display: flex; gap: 8px; padding: 7px 12px; border-bottom: 1px solid var(--border); cursor: pointer; }
+.row:hover { background: var(--hover); }
+.row.active { background: var(--active); }
+.row-text { min-width: 0; flex: 1; }
+.row-src, .row-tr { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row-tr { color: var(--muted); font-size: 13px; }
+.row.empty-tr .row-tr { opacity: .5; }
+.dot { width: 8px; height: 8px; border-radius: 50%; flex: none; margin-top: 6px; }
+.st-done { background: var(--done); } .st-fuzzy { background: var(--fuzzy); } .st-todo { background: var(--todo); }
+.list-empty { padding: 24px 16px; color: var(--muted); text-align: center; }
+
+#editor { padding: 24px clamp(16px, 4vw, 48px); }
+.card { max-width: 860px; margin: 0 auto; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 20px 22px; }
+.card-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.badge { font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 999px; color: #fff; }
+.badge.st-fuzzy { color: #1e1c19; }
+.field-label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin: 14px 0 5px; }
+.field-label:first-child { margin-top: 0; }
+.source { font-size: 17px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; padding: 10px 12px; background: var(--bg); border-radius: 6px; border: 1px solid var(--border); }
+.nl { color: var(--muted); opacity: .6; font-size: 13px; }
+.tok { font: 13px ui-monospace, Consolas, monospace; padding: 0 4px; margin: 0 1px; border: 0; border-radius: 4px; background: var(--tok-bg); color: var(--tok-text); cursor: pointer; vertical-align: 1px; }
+.tok:hover { outline: 1px solid var(--tok-text); }
+.ctx { font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+.ctx code, .note code { font: 12px ui-monospace, Consolas, monospace; background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
+.note { font-size: 13px; color: var(--muted); margin-top: 8px; }
+.note b { color: var(--text); font-weight: 600; }
+textarea { width: 100%; min-height: 64px; resize: vertical; padding: 10px 12px; font-size: 17px; line-height: 1.5; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); }
+textarea:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+.warnings:empty { display: none; }
+.warnings { margin-top: 10px; padding: 8px 12px; border-radius: 6px; background: var(--warn-bg); color: var(--warn-text); font-size: 13px; }
+.warnings div + div { margin-top: 3px; }
+.actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+label.check { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; user-select: none; margin-left: 4px; }
+details.meta { margin-top: 16px; font-size: 13px; color: var(--muted); }
+details.meta summary { cursor: pointer; }
+details.meta ul { margin: 6px 0 0; padding-left: 18px; font: 12px ui-monospace, Consolas, monospace; }
+.shortcuts { max-width: 860px; margin: 14px auto 0; font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px 16px; justify-content: center; }
+
+.welcome { max-width: 560px; margin: 8vh auto; text-align: center; }
+.welcome h1 { font-size: 26px; margin: 0 0 8px; }
+.welcome p { color: var(--muted); }
+.welcome .buttons { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin: 20px 0; }
+.notice { font-size: 13px; padding: 10px 12px; border-radius: 6px; background: var(--warn-bg); color: var(--warn-text); text-align: left; }
+.empty { max-width: 860px; margin: 10vh auto; text-align: center; color: var(--muted); }
+
+/* ---- DeepL ---- */
+.quota { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
+.quota .q-label { font-weight: 600; }
+.quota .q-bar { width: 70px; height: 5px; border-radius: 3px; background: var(--border); overflow: hidden; }
+.quota .q-bar i { display: block; height: 100%; width: 0; background: var(--accent); }
+.quota.low .q-bar i { background: var(--fuzzy); }
+.quota.empty .q-bar i { background: var(--todo); }
+.quota .q-text { color: var(--muted); font-variant-numeric: tabular-nums; }
+.quota.off .q-label { font-weight: 400; color: var(--muted); }
+button.bulk { width: 100%; }
+button.busy { opacity: .7; cursor: progress; }
+dialog { border: 1px solid var(--border); border-radius: 12px; background: var(--panel); color: var(--text); padding: 0; width: min(520px, calc(100vw - 32px)); box-shadow: 0 20px 60px rgba(0,0,0,.3); }
+dialog::backdrop { background: rgba(0,0,0,.35); }
+.dlg { padding: 20px 22px; display: grid; gap: 12px; }
+.dlg h2 { margin: 0; font-size: 18px; }
+.dlg p { margin: 0; }
+.dlg label.field { display: grid; gap: 4px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.dlg input[type=text], .dlg select, .dlg textarea { font-size: 14px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font-weight: 400; min-height: 0; }
+.dlg textarea { resize: vertical; }
+.dlg .hint { font-size: 12px; color: var(--muted); font-weight: 400; }
+.dlg code { font: 12px ui-monospace, Consolas, monospace; background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
+.dlg .opt { display: flex; gap: 8px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
+.dlg .opt:has(input:checked) { border-color: var(--accent); background: var(--active); }
+.dlg .opt input { margin-top: 3px; }
+.dlg .opt small { display: block; color: var(--muted); }
+.dlg-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; }
+.dlg-status { font-size: 13px; padding: 8px 12px; border-radius: 6px; background: var(--panel-2); }
+.dlg-status.bad { background: var(--warn-bg); color: var(--warn-text); }
+.progress { height: 8px; border-radius: 4px; background: var(--panel-2); overflow: hidden; }
+.progress i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+#toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 8px 14px; border-radius: 8px; font-size: 13px; box-shadow: 0 6px 20px rgba(0,0,0,.2); max-width: calc(100vw - 32px); }
+#toast.error { background: var(--todo); color: #fff; }
+
+body.no-project #files, body.no-project #entries { display: none; }
+body.no-project main { grid-template-columns: 1fr; }
+
+@media (max-width: 1000px) {
+  main { grid-template-columns: minmax(240px, 320px) 1fr; grid-template-rows: auto 1fr; }
+  #files { grid-column: 1 / -1; border-right: 0; border-bottom: 1px solid var(--border); display: flex; gap: 6px; overflow-x: auto; padding: 6px 8px; }
+  #files h2 { display: none; }
+  .file { width: auto; min-width: 160px; margin: 0; }
+}
+@media (max-width: 700px) {
+  main { grid-template-columns: 1fr; grid-template-rows: auto 35vh 1fr; }
+  #entries { border-right: 0; border-bottom: 1px solid var(--border); }
+}
+</style>
+</head>
+<body class="no-project">
+
+<header class="top">
+  <span class="brand">translate-my-stuff</span>
+  <span class="folder" id="folderName"></span>
+  <span class="spacer"></span>
+  <button class="quota off" id="deeplChip" title="DeepL settings and quota"><span class="q-label">DeepL</span><span class="q-bar" hidden><i></i></span><span class="q-text">off</span></button>
+  <span class="save-state" id="saveState"></span>
+  <label class="toggle" id="autosaveWrap" title="Write changes to disk automatically"><input type="checkbox" id="autosave"> Autosave</label>
+  <button id="btnSave" disabled>Save <kbd>Ctrl S</kbd></button>
+  <button id="btnOpen">Open folder…</button>
+</header>
+
+<main>
+  <section id="files"><h2>Files</h2><div id="fileList"></div></section>
+  <section id="entries">
+    <div class="entries-tools">
+      <div class="tabs" id="tabs">
+        <button data-filter="todo">Untranslated<span class="n"></span></button>
+        <button data-filter="fuzzy">Review<span class="n"></span></button>
+        <button data-filter="done">Done<span class="n"></span></button>
+        <button data-filter="all">All<span class="n"></span></button>
+      </div>
+      <input id="search" type="search" placeholder="Search source, translation, file ref…  (Ctrl K)">
+      <button class="bulk" id="btnBulk" hidden>Translate untranslated with DeepL…</button>
+    </div>
+    <div id="list"></div>
+  </section>
+  <section id="editor"></section>
+</main>
+
+<input type="file" id="dirInput" webkitdirectory multiple hidden>
+<dialog id="dlgDeepl">
+  <div class="dlg">
+    <h2>DeepL</h2>
+    <div class="dlg-status" id="dlStatus"></div>
+    <div id="dlSettings">
+      <div class="dlg" style="padding:0">
+        <label class="field">Source language
+          <input type="text" id="dlSource" placeholder="Auto-detect" maxlength="7">
+          <span class="hint">Language of the msgid texts, e.g. <code>EN</code>. Leave empty to auto-detect (unreliable for short strings).</span>
+        </label>
+        <label class="field">Formality
+          <select id="dlFormality">
+            <option value="default">Default</option>
+            <option value="prefer_less">Informal (du / tu)</option>
+            <option value="prefer_more">Formal (Sie / vous)</option>
+          </select>
+        </label>
+        <label class="field">Context
+          <textarea id="dlContext" rows="3"></textarea>
+          <span class="hint">Sent with every request to guide style and word choice (not billed). Per-entry notes and msgctxt are added when translating a single entry.</span>
+        </label>
+      </div>
+    </div>
+    <div class="dlg-actions"><button id="dlRefresh">Refresh quota</button><button class="primary" id="dlClose">Close</button></div>
+  </div>
+</dialog>
+
+<dialog id="dlgBulk">
+  <div class="dlg">
+    <h2>Translate with DeepL</h2>
+    <div id="bulkSetup" class="dlg" style="padding:0">
+      <p class="muted" style="font-size:13px">Fills every <b>empty</b> translation. Entries you have already translated are never touched.</p>
+      <label class="opt"><input type="radio" name="bulkScope" value="file" checked><span id="scopeFile"></span></label>
+      <label class="opt"><input type="radio" name="bulkScope" value="all"><span id="scopeAll"></span></label>
+      <label class="opt"><input type="checkbox" id="bulkFuzzy" checked><span>Mark results as “needs review”<small>Recommended. Godot ignores these until you approve each one with Ctrl+Enter. Use the Review tab to go through them.</small></span></label>
+      <div class="dlg-status" id="bulkQuota"></div>
+    </div>
+    <div id="bulkRun" class="dlg" style="padding:0" hidden>
+      <div class="progress"><i id="bulkBar"></i></div>
+      <div id="bulkText" class="muted" style="font-size:13px"></div>
+    </div>
+    <div class="dlg-actions"><button id="bulkCancel">Cancel</button><button class="primary" id="bulkStart">Translate</button></div>
+  </div>
+</dialog>
+
+<div id="toast" hidden></div>
+
+<script>
+// ============================================================================
+// ---- PO core ----  (pure functions: parse / serialize gettext .po files)
+// ============================================================================
+const PO_RE = /\.po$/i;
+const TOKEN_RE = /\{[^{}\s]*\}|%(?:\d+\$)?[-+#0]*\d*(?:\.\d+)?[sdifuxXcoeEgG]|\[\/?[a-z_]+(?:[= ][^\]\n]*)?\]/gi;
+const FIELD_RE = /^(msgctxt|msgid_plural|msgid|msgstr)(?:\[(\d+)\])?\s+(".*")\s*$/;
+const FIELD_KEY = { msgctxt: 'msgctxt', msgid: 'msgid', msgid_plural: 'msgidPlural' };
+const ESC_IN = { n: '\n', t: '\t', r: '\r', '"': '"', '\\': '\\', a: '\x07', b: '\b', f: '\f', v: '\v' };
+
+function unquote(s) {
+  s = s.trim();
+  if (s.length < 2 || s[0] !== '"' || s[s.length - 1] !== '"') return s;
+  return s.slice(1, -1).replace(/\\(.)/g, (_, c) => (c in ESC_IN ? ESC_IN[c] : c));
+}
+function quote(s) {
+  return '"' + s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n')
+                .replace(/\t/g, '\\t').replace(/\r/g, '\\r') + '"';
+}
+// Multi-line values are written gettext-style: key "" followed by one quoted line per \n.
+function fmtField(key, value) {
+  const nl = value.indexOf('\n');
+  if (nl === -1 || nl === value.length - 1) return [`${key} ${quote(value)}`];
+  return [`${key} ""`, ...value.split(/(?<=\n)/).filter(Boolean).map(quote)];
+}
+
+function parseBlock(lines) {
+  const e = { kind: 'raw', lines, comments: [], extracted: [], refs: [], flags: [], prev: [],
+              msgctxt: null, msgid: null, msgidPlural: null, msgstr: [], msgstrLine: -1, dirty: false };
+  let target = null;
+  lines.forEach((l, i) => {
+    if (l.startsWith('#~')) { target = null; return; }               // obsolete entry: keep raw
+    if (l.startsWith('#.')) { e.extracted.push(l.slice(2).trim()); return; }
+    if (l.startsWith('#:')) { e.refs.push(...l.slice(2).trim().split(/\s+/).filter(Boolean)); return; }
+    if (l.startsWith('#,')) { e.flags.push(...l.slice(2).split(',').map(s => s.trim()).filter(Boolean)); return; }
+    if (l.startsWith('#|')) { e.prev.push(l.slice(2).trim()); return; }
+    if (l.startsWith('#'))  { e.comments.push(l.slice(1).replace(/^ /, '')); return; }
+    const m = FIELD_RE.exec(l);
+    if (m) {
+      const [, key, idx, q] = m;
+      if (key === 'msgstr') {
+        if (e.msgstrLine < 0) e.msgstrLine = i;
+        target = ['msgstr', idx === undefined ? 0 : +idx];
+        e.msgstr[target[1]] = unquote(q);
+      } else {
+        target = [FIELD_KEY[key]];
+        e[target[0]] = unquote(q);
+      }
+      return;
+    }
+    if (target && l.trim().startsWith('"')) {
+      if (target[0] === 'msgstr') e.msgstr[target[1]] += unquote(l);
+      else e[target[0]] += unquote(l);
+    }
+  });
+  if (e.msgid !== null) e.kind = 'entry';
+  return e;
+}
+
+function parsePo(text) {
+  const bom = text.charCodeAt(0) === 0xFEFF;
+  if (bom) text = text.slice(1);
+  const eol = text.includes('\r\n') ? '\r\n' : '\n';
+  const finalNewline = text.endsWith('\n');
+  const blocks = [];
+  let cur = [];
+  for (const line of text.split(/\r?\n/)) {
+    if (line.trim() === '') { if (cur.length) { blocks.push(cur); cur = []; } }
+    else cur.push(line);
+  }
+  if (cur.length) blocks.push(cur);
+
+  const items = blocks.map(parseBlock);
+  const header = items.find(e => e.kind === 'entry' && e.msgid === '' && e.msgctxt === null);
+  const headerText = header ? (header.msgstr[0] || '') : '';
+  const np = /nplurals\s*=\s*(\d+)/.exec(headerText);
+  const pl = /\bplural\s*=\s*([^;]+)/.exec(headerText);
+  const lang = /^Language:\s*(.*)$/m.exec(headerText);
+  const nplurals = np ? Math.max(1, +np[1]) : 2;
+
+  const entries = items.filter(e => e.kind === 'entry' && e !== header && e.msgstrLine >= 0);
+  for (const e of entries) {
+    const n = e.msgidPlural !== null ? Math.max(nplurals, e.msgstr.length) : 1;
+    e.msgstr = Array.from({ length: n }, (_, k) => e.msgstr[k] ?? '');
+  }
+  return { bom, eol, finalNewline, items, entries, nplurals,
+           pluralExpr: pl ? pl[1].trim() : '', language: lang ? lang[1].trim() : '' };
+}
+
+// Edited entries keep every line up to their first msgstr verbatim (comments, msgid…),
+// only the flags line and the msgstr lines are regenerated.
+function rebuildEntry(e) {
+  const head = e.lines.slice(0, e.msgstrLine);
+  const flagLine = e.flags.length ? '#, ' + e.flags.join(', ') : null;
+  const out = [];
+  let placed = false;
+  for (const l of head) {
+    if (l.startsWith('#,')) { if (flagLine && !placed) { out.push(flagLine); placed = true; } continue; }
+    if (flagLine && !placed && (l.startsWith('#|') || !l.startsWith('#'))) { out.push(flagLine); placed = true; }
+    out.push(l);
+  }
+  if (e.msgidPlural !== null) e.msgstr.forEach((s, k) => out.push(...fmtField(`msgstr[${k}]`, s)));
+  else out.push(...fmtField('msgstr', e.msgstr[0] ?? ''));
+  return out;
+}
+
+function serializePo(f) {
+  const out = [];
+  f.items.forEach((e, i) => {
+    if (i) out.push('');
+    out.push(...(e.dirty ? rebuildEntry(e) : e.lines));
+  });
+  return (f.bom ? String.fromCharCode(0xFEFF) : '') + out.join(f.eol) + (f.finalNewline ? f.eol : '');
+}
+
+function entryStatus(e) {
+  if (e.flags.includes('fuzzy')) return 'fuzzy';
+  return e.msgstr.some(s => !s) ? 'todo' : 'done';
+}
+// ---- end PO core ----
+
+// ============================================================================
+// App
+// ============================================================================
+const $ = (s, el = document) => el.querySelector(s);
+const FS_API = typeof window.showDirectoryPicker === 'function';
+const STATUS_LABEL = { todo: 'Untranslated', fuzzy: 'Needs review', done: 'Translated' };
+
+const state = {
+  dirName: '', lastDir: null, files: [], fileIdx: -1, entryIdx: -1,
+  filter: lsGet('tms:filter') || 'todo', search: '',
+  autosave: FS_API && lsGet('tms:autosave') !== '0', rowEls: new Map(), lastTa: null,
+};
+
+const curFile = () => state.files[state.fileIdx];
+const curEntry = () => curFile()?.entries[state.entryIdx];
+const isDirty = f => f.editVersion !== f.savedVersion;
+
+function lsGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
+function lsSet(k, v) { try { localStorage.setItem(k, v); } catch {} }
+function esc(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+const oneLine = s => s.replace(/\s*\n\s*/g, ' ⏎ ');
+
+let toastTimer;
+function toast(msg, error = false) {
+  const t = $('#toast');
+  t.textContent = msg; t.className = error ? 'error' : ''; t.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => (t.hidden = true), error ? 6000 : 2500);
+}
+
+// ---- IndexedDB (remember the last folder handle) ----
+function idb() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open('translate-my-stuff', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('kv');
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+async function kv(mode, key, value) {
+  const db = await idb();
+  return new Promise((res, rej) => {
+    const tx = db.transaction('kv', mode);
+    const req = mode === 'readonly' ? tx.objectStore('kv').get(key) : tx.objectStore('kv').put(value, key);
+    tx.oncomplete = () => res(req.result);
+    tx.onerror = () => rej(tx.error);
+  });
+}
+
+// ---- Loading ----
+const SKIP_DIRS = new Set(['node_modules', 'bin', 'obj']);
+async function collectPoFiles(dir, prefix = '', depth = 0, out = []) {
+  for await (const [name, h] of dir.entries()) {
+    if (h.kind === 'directory') {
+      if (depth < 5 && !name.startsWith('.') && !SKIP_DIRS.has(name)) await collectPoFiles(h, prefix + name + '/', depth + 1, out);
+    } else if (PO_RE.test(name)) out.push({ path: prefix + name, handle: h });
+  }
+  return out;
+}
+
+function makeFile(text, path, name, handle) {
+  return Object.assign(parsePo(text), { path, name, handle, editVersion: 0, savedVersion: 0, saveTimer: 0, chain: null });
+}
+
+async function openFolder() {
+  if (!(await settlePending())) return;
+  if (!FS_API) { $('#dirInput').click(); return; }
+  let dir;
+  try { dir = await window.showDirectoryPicker({ id: 'po-folder', mode: 'readwrite' }); }
+  catch (err) { if (err.name !== 'AbortError') toast(err.message, true); return; }
+  await loadFromHandle(dir);
+  state.lastDir = dir;
+  kv('readwrite', 'lastDir', dir).catch(() => {});
+}
+
+async function reopenLast() {
+  const dir = state.lastDir;
+  if (!dir) return;
+  try {
+    if ((await dir.requestPermission({ mode: 'readwrite' })) !== 'granted') { toast('Permission was not granted.', true); return; }
+    await loadFromHandle(dir);
+  } catch (err) { toast(`Could not reopen ${dir.name}: ${err.message}`, true); }
+}
+
+async function loadFromHandle(dir) {
+  const found = (await collectPoFiles(dir)).sort((a, b) => a.path.localeCompare(b.path));
+  const files = [];
+  for (const { path, handle } of found) {
+    try { files.push(makeFile(await (await handle.getFile()).text(), path, handle.name, handle)); }
+    catch (err) { toast(`Could not read ${path}: ${err.message}`, true); }
+  }
+  setProject(dir.name, files);
+}
+
+async function loadFromInput(fileList) {
+  const picked = [...fileList].filter(f => PO_RE.test(f.name));
+  const root = (fileList[0]?.webkitRelativePath || '').split('/')[0] || 'folder';
+  const files = [];
+  for (const f of picked) {
+    const path = (f.webkitRelativePath || f.name).split('/').slice(1).join('/') || f.name;
+    files.push(makeFile(await f.text(), path, f.name, null));
+  }
+  files.sort((a, b) => a.path.localeCompare(b.path));
+  setProject(root, files);
+}
+
+function setProject(dirName, files) {
+  if (!files.length) { toast(`No .po files found in “${dirName}”.`, true); return; }
+  state.dirName = dirName;
+  state.files = files;
+  document.body.classList.remove('no-project');
+  $('#folderName').textContent = '📁 ' + dirName;
+  const last = files.findIndex(f => f.path === lsGet(`tms:file:${dirName}`));
+  selectFile(last >= 0 ? last : 0);
+  updateSaveUI();
+  $('#btnBulk').hidden = !deeplReady();
+}
+
+// ---- Saving ----
+function saveFile(f) {
+  clearTimeout(f.saveTimer);
+  f.chain = (f.chain || Promise.resolve()).then(async () => {
+    if (!isDirty(f)) return;
+    const version = f.editVersion;
+    const text = serializePo(f);
+    if (f.handle) {
+      const w = await f.handle.createWritable();
+      await w.write(text);
+      await w.close();
+    } else {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([text], { type: 'text/x-gettext-translation' }));
+      a.download = f.name;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    }
+    f.savedVersion = version;
+  }).catch(err => {
+    console.error(err);
+    toast(`Could not save ${f.path}: ${err.message}`, true);
+  }).finally(() => { updateSaveUI(); renderFiles(); });
+  return f.chain;
+}
+const saveAll = () => Promise.all(state.files.map(saveFile));
+
+function scheduleSave(f, delay) {
+  if (!state.autosave) return;
+  clearTimeout(f.saveTimer);
+  f.saveTimer = setTimeout(() => saveFile(f), delay);
+}
+
+async function settlePending() {
+  if (!state.files.some(isDirty)) return true;
+  if (state.autosave) { await saveAll(); return true; }
+  return confirm('You have unsaved translations. Discard them?');
+}
+
+function markEdited(f, e) {
+  e.dirty = true;
+  f.editVersion++;
+  scheduleSave(f, 1200);
+  updateSaveUI();
+}
+
+function updateSaveUI() {
+  const dirty = state.files.filter(isDirty);
+  $('#btnSave').disabled = !dirty.length;
+  const s = $('#saveState');
+  s.classList.toggle('unsaved', dirty.length > 0);
+  s.textContent = !state.files.length ? '' : dirty.length ? (state.autosave ? 'Saving…' : `Unsaved changes in ${dirty.length} file${dirty.length > 1 ? 's' : ''}`) : 'All changes saved';
+}
+
+// ---- Filtering / navigation ----
+function matches(e) {
+  if (state.filter !== 'all' && entryStatus(e) !== state.filter) return false;
+  if (!state.search) return true;
+  const q = state.search.toLowerCase();
+  return [e.msgid, e.msgidPlural, e.msgctxt, ...e.msgstr, ...e.refs].some(s => s && s.toLowerCase().includes(q));
+}
+
+function selectFile(i) {
+  state.fileIdx = i;
+  const f = curFile();
+  lsSet(`tms:file:${state.dirName}`, f.path);
+  const saved = +lsGet(`tms:pos:${state.dirName}/${f.path}`);
+  let idx = Number.isInteger(saved) && f.entries[saved] && matches(f.entries[saved]) ? saved : f.entries.findIndex(matches);
+  state.entryIdx = idx;
+  renderFiles();
+  renderList();
+  renderEditor();
+}
+
+function selectEntry(i, focus = true) {
+  state.entryIdx = i;
+  lsSet(`tms:pos:${state.dirName}/${curFile().path}`, String(i));
+  markActiveRow();
+  renderEditor(focus);
+}
+
+function go(dir) {
+  const f = curFile();
+  if (!f) return;
+  const n = f.entries.length;
+  const start = state.entryIdx < 0 ? (dir > 0 ? -1 : n) : state.entryIdx;
+  for (let step = 1; step <= n; step++) {
+    const raw = start + dir * step;
+    const i = ((raw % n) + n) % n;
+    if (i === state.entryIdx) break;
+    if (matches(f.entries[i])) {
+      if (raw < 0 || raw >= n) toast(dir > 0 ? 'Reached the end — wrapped to the top.' : 'Wrapped to the bottom.');
+      selectEntry(i);
+      return;
+    }
+  }
+  toast(state.filter === 'todo' && !state.search ? 'No untranslated entries left in this file 🎉' : 'No other entries match this filter.');
+}
+
+function accept() {
+  const f = curFile(), e = curEntry();
+  if (!e) return;
+  if (e.msgstr.every(Boolean) && e.flags.includes('fuzzy')) {
+    e.flags = e.flags.filter(x => x !== 'fuzzy');
+    markEdited(f, e);
+    refreshCurrent();
+  }
+  if (state.autosave) saveFile(f);
+  go(1);
+}
+
+function copySource() {
+  const f = curFile(), e = curEntry();
+  if (!e) return;
+  e.msgstr = e.msgstr.map((_, k) => (k === 0 || e.msgidPlural === null ? e.msgid : e.msgidPlural));
+  document.querySelectorAll('#editor textarea').forEach((ta, k) => { ta.value = e.msgstr[k]; autoGrow(ta); });
+  markEdited(f, e);
+  refreshCurrent();
+  $('#editor textarea')?.focus();
+}
+
+function setFuzzy(on) {
+  const f = curFile(), e = curEntry();
+  if (!e || on === e.flags.includes('fuzzy')) return;
+  e.flags = on ? [...e.flags, 'fuzzy'] : e.flags.filter(x => x !== 'fuzzy');
+  markEdited(f, e);
+  refreshCurrent();
+}
+
+// ---- Rendering ----
+function counts(f) {
+  const c = { todo: 0, fuzzy: 0, done: 0, all: f.entries.length };
+  for (const e of f.entries) c[entryStatus(e)]++;
+  return c;
+}
+
+function renderFiles() {
+  const box = $('#fileList');
+  box.innerHTML = state.files.map((f, i) => {
+    const c = counts(f), pct = x => (c.all ? (x / c.all) * 100 : 0);
+    return `<button class="file${i === state.fileIdx ? ' active' : ''}" data-i="${i}">
+      <div class="file-name">${esc(f.path)}${isDirty(f) ? ' <span class="file-dirty" title="Unsaved changes">●</span>' : ''}</div>
+      <div class="file-meta"><span>${esc(f.language || '')}</span><span>${c.done} / ${c.all}</span></div>
+      <div class="bar"><i class="b-done" style="width:${pct(c.done)}%"></i><i class="b-fuzzy" style="width:${pct(c.fuzzy)}%"></i></div>
+    </button>`;
+  }).join('');
+  renderTabs();
+}
+
+function renderTabs() {
+  const f = curFile();
+  const c = f ? counts(f) : {};
+  document.querySelectorAll('#tabs button').forEach(b => {
+    b.classList.toggle('on', b.dataset.filter === state.filter);
+    b.querySelector('.n').textContent = f ? c[b.dataset.filter] : '';
+  });
+}
+
+function renderList() {
+  const f = curFile(), list = $('#list');
+  list.textContent = '';
+  state.rowEls = new Map();
+  if (!f) return;
+  const frag = document.createDocumentFragment();
+  f.entries.forEach((e, i) => { if (matches(e)) frag.append(makeRow(e, i)); });
+  if (!frag.childNodes.length) list.innerHTML = '<div class="list-empty">No entries match.</div>';
+  else list.append(frag);
+  markActiveRow();
+}
+
+function makeRow(e, i) {
+  const el = document.createElement('div');
+  el.className = 'row';
+  el.dataset.i = i;
+  el.innerHTML = '<span class="dot"></span><div class="row-text"><div class="row-src"></div><div class="row-tr"></div></div>';
+  fillRow(el, e);
+  state.rowEls.set(i, el);
+  return el;
+}
+
+function fillRow(el, e) {
+  el.querySelector('.dot').className = 'dot st-' + entryStatus(e);
+  el.querySelector('.row-src').textContent = (e.msgctxt ? `[${e.msgctxt}] ` : '') + oneLine(e.msgid);
+  const tr = e.msgstr.find(Boolean);
+  el.querySelector('.row-tr').textContent = tr ? oneLine(tr) : '—';
+  el.classList.toggle('empty-tr', !tr);
+}
+
+function markActiveRow() {
+  $('#list .row.active')?.classList.remove('active');
+  const el = state.rowEls.get(state.entryIdx);
+  if (el) { el.classList.add('active'); el.scrollIntoView({ block: 'nearest' }); }
+}
+
+function richText(s) {
+  const plain = t => esc(t).replace(/\n/g, '<span class="nl">↵</span>\n');
+  let html = '', last = 0;
+  for (const m of s.matchAll(TOKEN_RE)) {
+    html += plain(s.slice(last, m.index)) + `<button type="button" class="tok" tabindex="-1" title="Insert" data-tok="${esc(m[0])}">${esc(m[0])}</button>`;
+    last = m.index + m[0].length;
+  }
+  return html + plain(s.slice(last));
+}
+
+function pluralExamples(f) {
+  if (f._pluralEx) return f._pluralEx;
+  const ex = Array.from({ length: f.nplurals }, () => []);
+  try {
+    if (!/^[\sn0-9()?:%<>=!&|+\-*/]+$/.test(f.pluralExpr)) throw new Error('unsupported');
+    const fn = new Function('n', `return Number(${f.pluralExpr});`);
+    for (let n = 0; n <= 200; n++) { const k = fn(n); if (ex[k] && ex[k].length < 4) ex[k].push(n); }
+  } catch {}
+  return (f._pluralEx = ex);
+}
+
+function welcomeHtml() {
+  return `<div class="welcome">
+    <h1>Translate your .po files</h1>
+    <p>Pick a folder (for example your Godot project's <code>locale</code> folder). All <code>.po</code> files inside are listed and you can step through every entry. Translations are written straight back into the files.</p>
+    <div class="buttons">
+      <button class="primary" id="wOpen">Open folder…</button>
+      ${state.lastDir ? `<button id="wReopen">Reopen “${esc(state.lastDir.name)}”</button>` : ''}
+    </div>
+    ${location.protocol === 'file:' ? `<p style="font-size:13px">Want DeepL suggestions? Run <code>node server.js</code> in the translate-my-stuff folder and open <code>http://localhost:8080</code>.</p>` : ''}
+    ${FS_API ? '' : `<div class="notice">This browser can't write files directly, so saving will <b>download</b> the edited .po files instead. Open this page in Chrome or Edge to save in place.</div>`}
+  </div>`;
+}
+
+function renderEditor(focus = false) {
+  const box = $('#editor'), f = curFile(), e = curEntry();
+  if (!f) { box.innerHTML = welcomeHtml(); return; }
+  if (!e) {
+    const review = counts(f).fuzzy;
+    box.innerHTML = `<div class="empty">${state.filter !== 'todo' || state.search ? 'Nothing matches this filter.'
+      : review ? `Nothing untranslated left. ${fmtNum(review)} entr${review === 1 ? 'y needs' : 'ies need'} review — open the <b>Review</b> tab.`
+      : 'Everything in this file is translated 🎉'}</div>`;
+    return;
+  }
+  const st = entryStatus(e), plural = e.msgidPlural !== null, ex = pluralExamples(f);
+  const formLabel = k => {
+    if (!plural) return 'Translation' + (f.language ? ` (${esc(f.language)})` : '');
+    const ns = ex[k]?.length ? ` · n = ${ex[k].join(', ')}${ex[k].length >= 4 ? '…' : ''}` : '';
+    return `Form ${k + 1}${ns}`;
+  };
+  const notes = [
+    ...e.extracted.map(t => `<div class="note"><b>Note:</b> ${esc(t)}</div>`),
+    ...e.comments.filter(Boolean).map(t => `<div class="note"><b>Translator comment:</b> ${esc(t)}</div>`),
+    e.prev.length ? `<div class="note"><b>Previous source:</b> <code>${esc(e.prev.join(' '))}</code></div>` : '',
+  ].join('');
+
+  box.innerHTML = `<div class="card">
+    <div class="card-head">
+      <span class="badge st-${st}" id="badge">${STATUS_LABEL[st]}</span>
+      <span class="muted">Entry ${state.entryIdx + 1} of ${f.entries.length}</span>
+      <span class="spacer"></span>
+      <span class="muted">${esc(f.path)}</span>
+    </div>
+    ${e.msgctxt !== null ? `<div class="ctx">Context: <code>${esc(e.msgctxt)}</code></div>` : ''}
+    <span class="field-label">Source${plural ? ' (singular)' : ''}</span>
+    <div class="source">${richText(e.msgid)}</div>
+    ${plural ? `<span class="field-label">Source (plural)</span><div class="source">${richText(e.msgidPlural)}</div>` : ''}
+    ${notes}
+    ${e.msgstr.map((_, k) => `<label class="field-label" for="tr${k}">${formLabel(k)}</label><textarea id="tr${k}" data-k="${k}" spellcheck="true" lang="${esc(f.language)}"></textarea>`).join('')}
+    <div class="warnings" id="warnings"></div>
+    <div class="actions">
+      <button id="btnPrev" title="Alt+↑">← Prev</button>
+      <button id="btnCopy" title="Alt+C">Copy source</button>
+      ${deeplReady() ? '<button id="btnDeepl" title="Translate this entry with DeepL (Alt+T)">DeepL</button>' : ''}
+      <label class="check" title="Alt+R — Godot ignores entries marked fuzzy"><input type="checkbox" id="chkFuzzy"${e.flags.includes('fuzzy') ? ' checked' : ''}> Needs review</label>
+      <span class="spacer"></span>
+      <button id="btnSkip" title="Alt+↓">Skip</button>
+      <button class="primary" id="btnNext" title="Ctrl+Enter">Done &amp; next →</button>
+    </div>
+    ${e.refs.length ? `<details class="meta"><summary>Used in ${e.refs.length} place${e.refs.length > 1 ? 's' : ''}</summary><ul>${e.refs.map(r => `<li>${esc(r)}</li>`).join('')}</ul></details>` : ''}
+  </div>
+  <div class="shortcuts">
+    <span><kbd>Ctrl</kbd>+<kbd>Enter</kbd> done &amp; next</span>
+    <span><kbd>Alt</kbd>+<kbd>↓</kbd>/<kbd>↑</kbd> skip / previous</span>
+    <span><kbd>Alt</kbd>+<kbd>C</kbd> copy source</span>
+    ${deeplReady() ? '<span><kbd>Alt</kbd>+<kbd>T</kbd> DeepL</span>' : ''}
+    <span><kbd>Alt</kbd>+<kbd>R</kbd> needs review</span>
+    <span>Click a <span class="tok">{0}</span> token to insert it</span>
+  </div>`;
+
+  const tas = box.querySelectorAll('textarea');
+  tas.forEach(ta => { ta.value = e.msgstr[+ta.dataset.k]; autoGrow(ta); });
+  state.lastTa = tas[0] || null;
+  updateWarnings();
+  if (focus && tas[0]) { tas[0].focus(); tas[0].setSelectionRange(tas[0].value.length, tas[0].value.length); }
+}
+
+function autoGrow(ta) {
+  ta.style.height = 'auto';
+  ta.style.height = Math.max(64, ta.scrollHeight + 2) + 'px';
+}
+
+function tokenDiff(src, tr) {
+  const missing = src.match(TOKEN_RE) || [], extra = [];
+  for (const t of tr.match(TOKEN_RE) || []) {
+    const i = missing.indexOf(t);
+    if (i >= 0) missing.splice(i, 1); else extra.push(t);
+  }
+  return { missing, extra };
+}
+
+function updateWarnings() {
+  const e = curEntry(), box = $('#warnings');
+  if (!e || !box) return;
+  const plural = e.msgidPlural !== null, out = [];
+  e.msgstr.forEach((tr, k) => {
+    if (!tr) return;
+    const src = k === 0 || !plural ? e.msgid : e.msgidPlural;
+    const where = plural ? `Form ${k + 1}: ` : '';
+    const { missing, extra } = tokenDiff(src, tr);
+    if (missing.length) out.push(`${where}missing ${missing.map(esc).join(' ')}`);
+    if (extra.length) out.push(`${where}not in source: ${extra.map(esc).join(' ')}`);
+    if (/\s$/.test(src) !== /\s$/.test(tr)) out.push(`${where}source ${/\s$/.test(src) ? 'ends' : "doesn't end"} with whitespace / line break, translation ${/\s$/.test(tr) ? 'does' : "doesn't"}`);
+    if (/^\s/.test(src) !== /^\s/.test(tr)) out.push(`${where}leading whitespace differs from source`);
+  });
+  box.innerHTML = out.map(w => `<div>⚠ ${w}</div>`).join('');
+}
+
+// Update everything that depends on the current entry's content without re-rendering the editor.
+function refreshCurrent() {
+  const e = curEntry();
+  if (!e) return;
+  const st = entryStatus(e), badge = $('#badge'), chk = $('#chkFuzzy');
+  if (badge) { badge.className = `badge st-${st}`; badge.textContent = STATUS_LABEL[st]; }
+  if (chk) chk.checked = e.flags.includes('fuzzy');
+  const row = state.rowEls.get(state.entryIdx);
+  if (row) fillRow(row, e);
+  updateWarnings();
+  renderFiles();
+}
+
+function insertToken(tok) {
+  const ta = state.lastTa && document.body.contains(state.lastTa) ? state.lastTa : $('#editor textarea');
+  if (!ta) return;
+  ta.focus();
+  ta.setRangeText(tok, ta.selectionStart, ta.selectionEnd, 'end');
+  ta.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+// ============================================================================
+// DeepL (through server.js — DeepL can't be called from a browser directly)
+// ============================================================================
+const deepl = {
+  reachable: false, configured: false, plan: null, usage: null, error: '',
+  source: lsGet('tms:deepl:source') ?? 'EN',
+  formality: lsGet('tms:deepl:formality') || 'default',
+  context: lsGet('tms:deepl:context') ?? 'Short user interface texts from a video game.',
+  bulk: null,
+};
+const deeplReady = () => deepl.reachable && deepl.configured;
+const fmtNum = n => n.toLocaleString('en-US');
+const fmtShort = n => (n >= 10000 ? Math.round(n / 1000) + 'k' : fmtNum(n));
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function api(path, body, signal) {
+  const res = await fetch(path, body
+    ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal }
+    : { signal });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw Object.assign(new Error(data.error || `HTTP ${res.status}`), { status: res.status });
+  return data;
+}
+
+// "de" -> "DE", "pt_BR" -> "PT-BR"; DeepL needs a variant for EN/PT/ZH targets.
+function deeplTarget(lang) {
+  if (!lang) return '';
+  const [base, region = ''] = lang.replace('-', '_').split('_');
+  const b = base.toUpperCase(), r = region.toUpperCase();
+  if (b === 'EN') return r === 'GB' ? 'EN-GB' : 'EN-US';
+  if (b === 'PT') return r === 'BR' ? 'PT-BR' : 'PT-PT';
+  if (b === 'ZH') return ['TW', 'HK', 'MO', 'HANT'].includes(r) ? 'ZH-HANT' : 'ZH-HANS';
+  return b;
+}
+
+// Placeholders ({0}, %s, [b]…) are wrapped in <x>…</x>, which DeepL is told to leave untouched.
+const xmlEsc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const xmlUnesc = s => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+function protect(text) {
+  let out = '', last = 0;
+  for (const m of text.matchAll(TOKEN_RE)) {
+    out += xmlEsc(text.slice(last, m.index)) + '<x>' + xmlEsc(m[0]) + '</x>';
+    last = m.index + m[0].length;
+  }
+  return out + xmlEsc(text.slice(last));
+}
+const unprotect = xml => xmlUnesc(xml.replace(/<x>([\s\S]*?)<\/x>/g, '$1'));
+
+async function deeplRequest(body, signal) {
+  for (let attempt = 0; ; attempt++) {
+    try { return await api('/api/translate', body, signal); }
+    catch (err) {
+      const retry = (err.status === 429 || err.status >= 500) && attempt < 4 && !signal?.aborted;
+      if (!retry) throw err;
+      await sleep(1000 * 2 ** attempt);
+    }
+  }
+}
+
+// Translates raw source strings. Leading/trailing whitespace is kept exactly; duplicates are sent once.
+async function translateTexts(texts, target, context, signal) {
+  const parts = texts.map(s => /^(\s*)([\s\S]*?)(\s*)$/.exec(s).slice(1));
+  const uniq = [...new Set(parts.map(p => p[1]).filter(Boolean))];
+  const result = new Map();
+  let billed = 0;
+  for (let i = 0; i < uniq.length; i += 50) {
+    const chunk = uniq.slice(i, i + 50);
+    const data = await deeplRequest({
+      texts: chunk.map(protect), target_lang: target, source_lang: deepl.source.trim().toUpperCase(),
+      context, formality: deepl.formality,
+    }, signal);
+    chunk.forEach((c, j) => result.set(c, unprotect(data.translations[j])));
+    billed += data.billed || 0;
+  }
+  if (deepl.usage) { deepl.usage.character_count += billed; renderDeeplChip(); }
+  return { texts: parts.map(([a, c, b]) => (c ? a + result.get(c) + b : a + b)), billed };
+}
+
+async function deeplInit() {
+  if (location.protocol === 'file:') { deepl.reachable = false; renderDeeplUI(); return; }
+  try {
+    const s = await api('/api/status');
+    Object.assign(deepl, { reachable: true, configured: s.configured, plan: s.plan, error: '' });
+  } catch { deepl.reachable = false; }
+  renderDeeplUI();
+  if (deeplReady()) await refreshUsage();
+}
+
+async function refreshUsage() {
+  if (!deepl.reachable) return;
+  try {
+    const s = await api('/api/status');
+    Object.assign(deepl, { configured: s.configured, plan: s.plan });
+    deepl.usage = s.configured ? await api('/api/usage') : null;
+    deepl.error = '';
+  } catch (err) { deepl.error = err.message; }
+  renderDeeplUI();
+}
+
+function renderDeeplUI() {
+  renderDeeplChip();
+  $('#btnBulk').hidden = !deeplReady() || !state.files.length;
+  if (curEntry() && !$('#editor').contains(document.activeElement)) renderEditor();
+  if ($('#dlgDeepl').open) renderDeeplDialog();
+}
+
+function renderDeeplChip() {
+  const chip = $('#deeplChip'), u = deepl.usage;
+  const text = chip.querySelector('.q-text'), bar = chip.querySelector('.q-bar');
+  chip.classList.toggle('off', !deeplReady());
+  chip.classList.remove('low', 'empty');
+  bar.hidden = !u;
+  if (!deepl.reachable) text.textContent = 'off';
+  else if (!deepl.configured) text.textContent = 'no key';
+  else if (deepl.error && !u) text.textContent = 'error';
+  else if (u) {
+    const used = u.character_count, limit = u.character_limit, left = limit - used;
+    bar.querySelector('i').style.width = Math.min(100, (used / limit) * 100) + '%';
+    text.textContent = `${fmtShort(used)} / ${fmtShort(limit)}`;
+    chip.classList.toggle('low', left < limit * 0.1);
+    chip.classList.toggle('empty', left <= 0);
+    chip.title = `DeepL ${deepl.plan} plan: ${fmtNum(used)} of ${fmtNum(limit)} characters used this billing period (${fmtNum(Math.max(0, left))} left). Click for settings.`;
+  } else text.textContent = '…';
+}
+
+function renderDeeplDialog() {
+  const s = $('#dlStatus'), u = deepl.usage;
+  s.classList.toggle('bad', !deeplReady() || !!deepl.error);
+  if (!deepl.reachable) {
+    s.innerHTML = location.protocol === 'file:'
+      ? 'DeepL needs the local server. Run <code>node server.js</code> in this folder and open <code>http://localhost:8080</code>.'
+      : 'The local server isn’t responding. Is <code>node server.js</code> still running?';
+  } else if (!deepl.configured) {
+    s.innerHTML = 'No API key yet. Copy <code>.env.example</code> to <code>.env</code>, set <code>DEEPL_API_KEY=…</code>, then click “Refresh quota” (no restart needed).';
+  } else if (deepl.error) {
+    s.textContent = deepl.error;
+  } else if (u) {
+    s.innerHTML = `Connected (${esc(deepl.plan)} plan). <b>${fmtNum(u.character_count)}</b> of ${fmtNum(u.character_limit)} characters used this billing period, <b>${fmtNum(Math.max(0, u.character_limit - u.character_count))}</b> left.`;
+  } else s.textContent = 'Connected.';
+  $('#dlSettings').hidden = !deeplReady();
+}
+
+function openDeeplDialog() {
+  $('#dlSource').value = deepl.source;
+  $('#dlFormality').value = deepl.formality;
+  $('#dlContext').value = deepl.context;
+  renderDeeplDialog();
+  $('#dlgDeepl').showModal();
+  refreshUsage();
+}
+
+// ---- Single entry ----
+async function deeplCurrent() {
+  const f = curFile(), e = curEntry(), btn = $('#btnDeepl');
+  if (!e || !deeplReady() || btn?.classList.contains('busy')) return;
+  const target = deeplTarget(f.language);
+  if (!target) { toast('This file has no "Language:" header, so the target language is unknown.', true); return; }
+  const sources = e.msgstr.map((_, k) => (k === 0 || e.msgidPlural === null ? e.msgid : e.msgidPlural));
+  const context = [deepl.context, e.msgctxt && `Context: ${e.msgctxt}`, ...e.extracted.map(n => `Note: ${n}`)].filter(Boolean).join('\n');
+  if (btn) { btn.classList.add('busy'); btn.textContent = 'Translating…'; }
+  try {
+    const { texts } = await translateTexts(sources, target, context);
+    e.msgstr = texts;
+    markEdited(f, e);
+    if (curEntry() === e) {
+      document.querySelectorAll('#editor textarea').forEach(ta => { ta.value = e.msgstr[+ta.dataset.k]; autoGrow(ta); });
+      refreshCurrent();
+      $('#editor textarea')?.focus();
+    } else renderFiles();
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    const b = $('#btnDeepl');
+    if (b) { b.classList.remove('busy'); b.textContent = 'DeepL'; }
+  }
+}
+
+// ---- Bulk ----
+function planBulk(files) {
+  const groups = new Map();            // target language -> Map(source text -> [{f, e, k}])
+  const entries = new Set();
+  let chars = 0, texts = 0, noLang = 0;
+  for (const f of files) {
+    const target = deeplTarget(f.language);
+    if (!target) { noLang++; continue; }
+    if (!groups.has(target)) groups.set(target, new Map());
+    const g = groups.get(target);
+    for (const e of f.entries) {
+      e.msgstr.forEach((s, k) => {
+        if (s) return;
+        const src = k === 0 || e.msgidPlural === null ? e.msgid : e.msgidPlural;
+        if (!g.has(src)) { g.set(src, []); chars += src.trim().length; texts++; }
+        g.get(src).push({ f, e, k });
+        entries.add(e);
+      });
+    }
+  }
+  return { groups, chars, texts, entries: entries.size, noLang };
+}
+
+function describePlan(p) {
+  return `${fmtNum(p.entries)} entr${p.entries === 1 ? 'y' : 'ies'} · ${fmtNum(p.texts)} unique text${p.texts === 1 ? '' : 's'} · ~${fmtNum(p.chars)} characters`;
+}
+
+function openBulk() {
+  if (!deeplReady() || !curFile()) return;
+  const f = curFile();
+  deepl.bulk = { plans: { file: planBulk([f]), all: planBulk(state.files) }, running: false, ctrl: null, finished: false };
+  const { file, all } = deepl.bulk.plans;
+  $('#scopeFile').innerHTML = `This file <code>${esc(f.path)}</code><small>${describePlan(file)}</small>`;
+  $('#scopeAll').innerHTML = `All ${state.files.length} files<small>${describePlan(all)}${all.noLang ? ` · ${all.noLang} file(s) skipped (no Language header)` : ''}</small>`;
+  $('#scopeAll').closest('.opt').hidden = state.files.length < 2;
+  document.querySelector('input[name=bulkScope][value=file]').checked = true;
+  $('#bulkSetup').hidden = false;
+  $('#bulkRun').hidden = true;
+  $('#bulkStart').hidden = false;
+  $('#bulkCancel').textContent = 'Cancel';
+  updateBulkQuota();
+  $('#dlgBulk').showModal();
+  refreshUsage().then(updateBulkQuota);
+}
+
+function selectedPlan() {
+  return deepl.bulk.plans[document.querySelector('input[name=bulkScope]:checked').value];
+}
+
+function updateBulkQuota() {
+  if (!deepl.bulk || deepl.bulk.running) return;
+  const p = selectedPlan(), u = deepl.usage, box = $('#bulkQuota');
+  const left = u ? u.character_limit - u.character_count : null;
+  box.classList.toggle('bad', left !== null && p.chars > left);
+  box.innerHTML = !p.texts ? 'Nothing to translate: every entry already has a translation.'
+    : left === null ? `About <b>${fmtNum(p.chars)}</b> characters will be billed.`
+    : `About <b>${fmtNum(p.chars)}</b> characters will be billed. You have <b>${fmtNum(Math.max(0, left))}</b> left this period${p.chars > left ? ' — <b>not enough</b>; DeepL will stop when the quota runs out.' : '.'}`;
+  $('#bulkStart').disabled = !p.texts;
+}
+
+async function runBulk() {
+  const b = deepl.bulk, plan = selectedPlan(), markFuzzy = $('#bulkFuzzy').checked;
+  b.running = true;
+  b.ctrl = new AbortController();
+  $('#bulkSetup').hidden = true;
+  $('#bulkRun').hidden = false;
+  $('#bulkStart').hidden = true;
+  $('#bulkCancel').textContent = 'Stop';
+  let done = 0, billed = 0;
+  const filled = new Set();
+  const progress = msg => {
+    $('#bulkBar').style.width = (plan.texts ? (done / plan.texts) * 100 : 100) + '%';
+    $('#bulkText').textContent = msg || `${fmtNum(done)} / ${fmtNum(plan.texts)} texts translated · ${fmtNum(billed)} characters billed`;
+  };
+  progress();
+  let error = null;
+  try {
+    for (const [target, g] of plan.groups) {
+      const sources = [...g.keys()];
+      for (let i = 0; i < sources.length; i += 50) {
+        if (b.ctrl.signal.aborted) throw new DOMException('Stopped', 'AbortError');
+        const chunk = sources.slice(i, i + 50);
+        const res = await translateTexts(chunk, target, deepl.context, b.ctrl.signal);
+        billed += res.billed;
+        const touched = new Map();
+        chunk.forEach((src, j) => {
+          for (const { f, e, k } of g.get(src)) {
+            if (e.msgstr[k]) continue;                          // filled by hand meanwhile
+            e.msgstr[k] = res.texts[j];
+            if (markFuzzy && !e.flags.includes('fuzzy')) e.flags.push('fuzzy');
+            touched.set(e, f);
+            filled.add(e);
+          }
+        });
+        for (const [e, f] of touched) {
+          markEdited(f, e);
+          if (f === curFile()) { const i = f.entries.indexOf(e); const row = state.rowEls.get(i); if (row) fillRow(row, e); }
+        }
+        if (touched.has(curEntry()) && !$('#editor').contains(document.activeElement)) renderEditor();
+        renderFiles();
+        done += chunk.length;
+        progress();
+      }
+    }
+  } catch (err) {
+    if (err.name !== 'AbortError') error = err;
+  }
+  b.running = false;
+  b.finished = true;
+  $('#bulkCancel').textContent = 'Close';
+  progress(`${error ? 'Stopped with an error: ' + error.message + ' — ' : b.ctrl.signal.aborted ? 'Stopped. ' : 'Done. '}`
+    + `${fmtNum(filled.size)} entr${filled.size === 1 ? 'y' : 'ies'} translated, ${fmtNum(billed)} characters billed.`
+    + (markFuzzy && filled.size ? ' Open the Review tab to approve them.' : ''));
+  if (state.autosave) saveAll();
+  applyFilter();
+  refreshUsage();
+}
+
+function closeBulk() {
+  const b = deepl.bulk;
+  if (b?.running) { b.ctrl.abort(); return; }
+  $('#dlgBulk').close();
+}
+
+$('#deeplChip').addEventListener('click', openDeeplDialog);
+$('#dlClose').addEventListener('click', () => $('#dlgDeepl').close());
+$('#dlRefresh').addEventListener('click', refreshUsage);
+$('#dlSource').addEventListener('input', ev => { deepl.source = ev.target.value; lsSet('tms:deepl:source', deepl.source); });
+$('#dlFormality').addEventListener('change', ev => { deepl.formality = ev.target.value; lsSet('tms:deepl:formality', deepl.formality); });
+$('#dlContext').addEventListener('input', ev => { deepl.context = ev.target.value; lsSet('tms:deepl:context', deepl.context); });
+$('#btnBulk').addEventListener('click', openBulk);
+$('#bulkStart').addEventListener('click', runBulk);
+$('#bulkCancel').addEventListener('click', closeBulk);
+$('#dlgBulk').addEventListener('cancel', ev => { if (deepl.bulk?.running) { ev.preventDefault(); deepl.bulk.ctrl.abort(); } });
+document.querySelectorAll('input[name=bulkScope]').forEach(r => r.addEventListener('change', updateBulkQuota));
+
+// ---- Events ----
+$('#btnOpen').addEventListener('click', openFolder);
+$('#btnSave').addEventListener('click', saveAll);
+$('#dirInput').addEventListener('change', ev => { if (ev.target.files.length) loadFromInput(ev.target.files); ev.target.value = ''; });
+
+const autosaveBox = $('#autosave');
+autosaveBox.checked = state.autosave;
+if (!FS_API) $('#autosaveWrap').hidden = true;
+autosaveBox.addEventListener('change', () => {
+  state.autosave = autosaveBox.checked;
+  lsSet('tms:autosave', state.autosave ? '1' : '0');
+  if (state.autosave) saveAll();
+  updateSaveUI();
+});
+
+$('#fileList').addEventListener('click', async ev => {
+  const b = ev.target.closest('.file');
+  if (!b || +b.dataset.i === state.fileIdx) return;
+  if (state.autosave && curFile()) saveFile(curFile());
+  selectFile(+b.dataset.i);
+});
+
+$('#tabs').addEventListener('click', ev => {
+  const b = ev.target.closest('button');
+  if (!b) return;
+  state.filter = b.dataset.filter;
+  lsSet('tms:filter', state.filter);
+  applyFilter();
+});
+
+let searchTimer;
+$('#search').addEventListener('input', ev => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => { state.search = ev.target.value.trim(); applyFilter(); }, 150);
+});
+
+function applyFilter() {
+  renderTabs();
+  renderList();
+  const f = curFile();
+  if (!f) return;
+  const e = curEntry();
+  if (!e || !matches(e)) { state.entryIdx = f.entries.findIndex(matches); renderEditor(); }
+  else markActiveRow();
+}
+
+$('#list').addEventListener('click', ev => {
+  const r = ev.target.closest('.row');
+  if (r) selectEntry(+r.dataset.i);
+});
+
+const editor = $('#editor');
+editor.addEventListener('input', ev => {
+  const ta = ev.target.closest('textarea');
+  if (!ta) return;
+  const f = curFile(), e = curEntry();
+  e.msgstr[+ta.dataset.k] = ta.value;
+  autoGrow(ta);
+  markEdited(f, e);
+  refreshCurrent();
+});
+editor.addEventListener('focusin', ev => { if (ev.target.tagName === 'TEXTAREA') state.lastTa = ev.target; });
+editor.addEventListener('mousedown', ev => { if (ev.target.closest('.tok')) ev.preventDefault(); }); // keep textarea focus
+editor.addEventListener('change', ev => { if (ev.target.id === 'chkFuzzy') setFuzzy(ev.target.checked); });
+editor.addEventListener('click', ev => {
+  const t = ev.target.closest('button');
+  if (!t) return;
+  if (t.classList.contains('tok')) insertToken(t.dataset.tok);
+  else if (t.id === 'btnNext') accept();
+  else if (t.id === 'btnSkip') go(1);
+  else if (t.id === 'btnPrev') go(-1);
+  else if (t.id === 'btnCopy') copySource();
+  else if (t.id === 'btnDeepl') deeplCurrent();
+  else if (t.id === 'wOpen') openFolder();
+  else if (t.id === 'wReopen') reopenLast();
+});
+
+document.addEventListener('keydown', ev => {
+  const ctrl = ev.ctrlKey || ev.metaKey;
+  if (ctrl && ev.key === 'Enter') { ev.preventDefault(); accept(); }
+  else if (ctrl && ev.key.toLowerCase() === 's') { ev.preventDefault(); saveAll(); }
+  else if (ctrl && ev.key.toLowerCase() === 'k') { ev.preventDefault(); $('#search').focus(); $('#search').select(); }
+  else if (ev.altKey && ev.key === 'ArrowDown') { ev.preventDefault(); go(1); }
+  else if (ev.altKey && ev.key === 'ArrowUp') { ev.preventDefault(); go(-1); }
+  else if (ev.altKey && ev.code === 'KeyC') { ev.preventDefault(); copySource(); }
+  else if (ev.altKey && ev.code === 'KeyT') { ev.preventDefault(); deeplCurrent(); }
+  else if (ev.altKey && ev.code === 'KeyR') { ev.preventDefault(); const e = curEntry(); if (e) setFuzzy(!e.flags.includes('fuzzy')); }
+});
+
+window.addEventListener('beforeunload', ev => {
+  if (state.files.some(isDirty)) { if (state.autosave) saveAll(); ev.preventDefault(); ev.returnValue = ''; }
+});
+
+// ---- Boot ----
+(async () => {
+  renderEditor();
+  updateSaveUI();
+  if (FS_API) {
+    try { state.lastDir = (await kv('readonly', 'lastDir')) || null; } catch {}
+    if (state.lastDir && !state.files.length) renderEditor();
+  }
+  await deeplInit();
+})();
+</script>
+</body>
+</html>
