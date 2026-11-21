@@ -25,6 +25,31 @@ Next time, use **Reopen "…"** on the start screen to jump back into the same f
 Clicking a placeholder like `{0}`, `%s` or a BBCode tag in the source inserts it at the cursor. A warning shows
 when the translation is missing placeholders or has whitespace at the start or end that the source doesn't (or the reverse).
 
+## Screenshots
+
+Put a folder named `screenshots` next to a `.po` file, with one picture per entry, and the editor shows the picture of
+the current entry above its source text (click it to enlarge, <kbd>Alt</kbd>+<kbd>P</kbd> to hide or show it).
+
+```
+projects/project-name/
+  de.po
+  screenshots/
+    some-kind-of-description-3f2a9c1e7b04.webp
+    screenshots.json          (optional)
+```
+
+A picture is matched to its entry by the 12 hex digits before the extension (`.webp`, `.png` or `.jpg`): the start of
+the 64-bit FNV-1a hash of the UTF-8 bytes of the entry's gettext key, which is the `msgid`, or `msgctxt` + `\u0004` +
+`msgid` when the entry has a context. Everything before the last dash is only there for people and is ignored.
+
+The optional `screenshots.json` says how the text appears in each picture, shown as a caption:
+
+```json
+{ "shots": { "some-kind-of-description-3f2a9c1e7b04.webp": { "kind": "whole", "width": 1280, "height": 720 } } }
+```
+
+`kind` is `whole` (the outlined text is this entry), `part` (the entry is part of the outlined text) or `tooltip` (the entry is the tooltip of the outlined element). 
+
 ## DeepL
 
 1. Copy `.env.example` to `.env` and set `DEEPL_API_KEY=` to your key

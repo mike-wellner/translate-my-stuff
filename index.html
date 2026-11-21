@@ -141,6 +141,19 @@ dialog::backdrop { background: rgba(0,0,0,.35); }
 .progress { height: 8px; border-radius: 4px; background: var(--panel-2); overflow: hidden; }
 .progress i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
 
+/* ---- Screenshots ---- */
+.shot-bar { display: flex; align-items: baseline; gap: 10px; margin-bottom: 6px; }
+.shot-bar .field-label { margin: 0; }
+.shot-caption { font-size: 12px; }
+.shot-bar button { padding: 2px 10px; font-size: 12px; }
+.shot { display: block; margin: 0 auto 4px; padding: 0; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; background: var(--panel-2); cursor: zoom-in; }
+.shot img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.shot-none { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+.shot-block { margin-bottom: 14px; }
+dialog.shot-dialog { width: auto; max-width: calc(100vw - 32px); max-height: calc(100vh - 32px); padding: 0; background: #000; border: 0; cursor: zoom-out; }
+dialog.shot-dialog img { display: block; max-width: calc(100vw - 32px); max-height: calc(100vh - 32px); }
+dialog.shot-dialog::backdrop { background: rgba(0,0,0,.75); }
+
 #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 8px 14px; border-radius: 8px; font-size: 13px; box-shadow: 0 6px 20px rgba(0,0,0,.2); max-width: calc(100vw - 32px); }
 #toast.error { background: var(--todo); color: #fff; }
 
@@ -235,6 +248,8 @@ body.no-project main { grid-template-columns: 1fr; }
     <div class="dlg-actions"><button id="bulkCancel">Cancel</button><button class="primary" id="bulkStart">Translate</button></div>
   </div>
 </dialog>
+
+<dialog id="dlgShot" class="shot-dialog"><img id="shotBig" alt=""></dialog>
 
 <div id="toast" hidden></div>
 
@@ -370,6 +385,7 @@ const state = {
   dirName: '', lastDir: null, files: [], fileIdx: -1, entryIdx: -1,
   filter: lsGet('tms:filter') || 'todo', search: '',
   autosave: FS_API && lsGet('tms:autosave') !== '0', rowEls: new Map(), lastTa: null,
+  showShots: lsGet('tms:shots') !== '0',
 };
 
 const curFile = () => state.files[state.fileIdx];
@@ -408,19 +424,136 @@ async function kv(mode, key, value) {
   });
 }
 
+// ---- Screenshots ----
+// A folder named "screenshots" next to a .po file holds one picture per entry, named <anything>-<hash>.webp|png|jpg.
+// The hash is the first 12 hex digits of the 64-bit FNV-1a hash of the UTF-8 bytes of the entry's gettext key
+// (msgid, or msgctxt + "\u0004" + msgid). An optional screenshots.json says how the text appears in each picture.
+const SHOT_DIR = 'screenshots';
+const SHOT_MANIFEST = 'screenshots.json';
+const SHOT_RE = /-([0-9a-f]{12})\.(webp|png|jpe?g)$/i;
+const SHOT_CAPTION = {
+  whole: 'The text is outlined.',
+  part: 'Part of the outlined text.',
+  tooltip: 'Tooltip of the outlined element (not visible in the picture).',
+};
+const FNV_OFFSET = 0xcbf29ce484222325n, FNV_PRIME = 0x100000001b3n, MASK_64 = (1n << 64n) - 1n;
+const utf8 = new TextEncoder();
+
+function shotHash(e) {
+  if (e._shotHash) return e._shotHash;
+  const key = e.msgctxt ? e.msgctxt + '\u0004' + e.msgid : e.msgid;
+  let hash = FNV_OFFSET;
+  for (const byte of utf8.encode(key)) hash = ((hash ^ BigInt(byte)) * FNV_PRIME) & MASK_64;
+  return (e._shotHash = hash.toString(16).padStart(16, '0').slice(0, 12));
+}
+
+// Folder path ('' or 'a/b/') -> { pictures: Map(hash -> handle or File), manifest: handle or File or null, records: Map(hash -> record) }
+function shotFolder(folders, folderPath) {
+  if (!folders.has(folderPath)) folders.set(folderPath, { pictures: new Map(), manifest: null, records: new Map() });
+  return folders.get(folderPath);
+}
+function addShotFile(folders, folderPath, name, source) {
+  const m = SHOT_RE.exec(name);
+  if (m) shotFolder(folders, folderPath).pictures.set(m[1].toLowerCase(), source);
+  else if (name.toLowerCase() === SHOT_MANIFEST) shotFolder(folders, folderPath).manifest = source;
+}
+const fileOf = source => (source.getFile ? source.getFile() : source);
+
+async function readShotManifests(folders) {
+  for (const folder of folders.values()) {
+    if (!folder.manifest) continue;
+    try {
+      const data = JSON.parse(await (await fileOf(folder.manifest)).text());
+      for (const [name, record] of Object.entries(data.shots || {})) {
+        const m = SHOT_RE.exec(name);
+        if (m) folder.records.set(m[1].toLowerCase(), record);
+      }
+    } catch (err) { toast(`Could not read ${SHOT_MANIFEST}: ${err.message}`, true); }
+  }
+}
+
+function attachShots(files, folders) {
+  for (const f of files) {
+    const folderPath = f.path.slice(0, f.path.lastIndexOf('/') + 1);
+    const folder = folders.get(folderPath);
+    f.shots = folder && folder.pictures.size ? folder : null;
+  }
+}
+
+// Object URLs of the pictures shown lately, so stepping back and forth doesn't read the files again.
+const shotUrls = new Map();
+async function shotUrl(f, e) {
+  const hash = shotHash(e), source = f.shots?.pictures.get(hash);
+  if (!source) return null;
+  const key = f.path + '#' + hash;
+  if (shotUrls.has(key)) return shotUrls.get(key);
+  const url = URL.createObjectURL(await fileOf(source));
+  shotUrls.set(key, url);
+  if (shotUrls.size > 40) {
+    const [oldest] = shotUrls.keys();
+    URL.revokeObjectURL(shotUrls.get(oldest));
+    shotUrls.delete(oldest);
+  }
+  return url;
+}
+
+function shotHtml(f, e) {
+  if (!f.shots) return '';
+  const hash = shotHash(e);
+  if (!f.shots.pictures.has(hash)) return '<div class="shot-none">No screenshot of this text yet.</div>';
+  const toggle = `<button type="button" id="btnShots" title="Alt+P">${state.showShots ? 'Hide' : 'Show'}</button>`;
+  if (!state.showShots) return `<div class="shot-block"><div class="shot-bar"><span class="field-label">Screenshot</span>${toggle}</div></div>`;
+  const record = f.shots.records.get(hash);
+  const width = +record?.width || 16, height = +record?.height || 9;
+  // As wide as the card, but never taller than 38% of the window.
+  const size = `aspect-ratio:${width} / ${height};width:min(100%, calc(38vh * ${width} / ${height}))`;
+  return `<div class="shot-block">
+    <div class="shot-bar"><span class="field-label">Screenshot</span><span class="muted shot-caption">${esc(SHOT_CAPTION[record?.kind] || '')}</span><span class="spacer"></span>${toggle}</div>
+    <button type="button" class="shot" id="shotOpen" style="${size}" title="Click to enlarge"><img id="shotImg" alt="Where this text appears in the game"></button>
+  </div>`;
+}
+
+async function loadShot(f, e) {
+  const img = $('#shotImg');
+  if (!img) return;
+  try {
+    const url = await shotUrl(f, e);
+    if (url && curEntry() === e && $('#shotImg') === img) img.src = url;
+  } catch (err) { toast(`Could not read the screenshot: ${err.message}`, true); }
+}
+
+function toggleShots() {
+  const block = $('#editor .shot-block');
+  const f = curFile(), e = curEntry();
+  if (!block || !f || !e) return;
+  state.showShots = !state.showShots;
+  lsSet('tms:shots', state.showShots ? '1' : '0');
+  block.outerHTML = shotHtml(f, e);
+  loadShot(f, e);
+}
+
+function openShot() {
+  const img = $('#shotImg');
+  if (!img?.src) return;
+  $('#shotBig').src = img.src;
+  $('#dlgShot').showModal();
+}
+
 // ---- Loading ----
 const SKIP_DIRS = new Set(['node_modules', 'bin', 'obj']);
-async function collectPoFiles(dir, prefix = '', depth = 0, out = []) {
+async function collectPoFiles(dir, prefix = '', depth = 0, out = [], shots = new Map()) {
   for await (const [name, h] of dir.entries()) {
     if (h.kind === 'directory') {
-      if (depth < 5 && !name.startsWith('.') && !SKIP_DIRS.has(name)) await collectPoFiles(h, prefix + name + '/', depth + 1, out);
+      if (name.toLowerCase() === SHOT_DIR) {
+        for await (const [shotName, sh] of h.entries()) if (sh.kind === 'file') addShotFile(shots, prefix, shotName, sh);
+      } else if (depth < 5 && !name.startsWith('.') && !SKIP_DIRS.has(name)) await collectPoFiles(h, prefix + name + '/', depth + 1, out, shots);
     } else if (PO_RE.test(name)) out.push({ path: prefix + name, handle: h });
   }
-  return out;
+  return { found: out, shots };
 }
 
 function makeFile(text, path, name, handle) {
-  return Object.assign(parsePo(text), { path, name, handle, editVersion: 0, savedVersion: 0, saveTimer: 0, chain: null });
+  return Object.assign(parsePo(text), { path, name, handle, editVersion: 0, savedVersion: 0, saveTimer: 0, chain: null, shots: null });
 }
 
 async function openFolder() {
@@ -444,24 +577,33 @@ async function reopenLast() {
 }
 
 async function loadFromHandle(dir) {
-  const found = (await collectPoFiles(dir)).sort((a, b) => a.path.localeCompare(b.path));
+  const { found, shots } = await collectPoFiles(dir);
+  found.sort((a, b) => a.path.localeCompare(b.path));
   const files = [];
   for (const { path, handle } of found) {
     try { files.push(makeFile(await (await handle.getFile()).text(), path, handle.name, handle)); }
     catch (err) { toast(`Could not read ${path}: ${err.message}`, true); }
   }
+  await readShotManifests(shots);
+  attachShots(files, shots);
   setProject(dir.name, files);
 }
 
 async function loadFromInput(fileList) {
-  const picked = [...fileList].filter(f => PO_RE.test(f.name));
-  const root = (fileList[0]?.webkitRelativePath || '').split('/')[0] || 'folder';
-  const files = [];
-  for (const f of picked) {
-    const path = (f.webkitRelativePath || f.name).split('/').slice(1).join('/') || f.name;
-    files.push(makeFile(await f.text(), path, f.name, null));
+  const all = [...fileList];
+  const root = (all[0]?.webkitRelativePath || '').split('/')[0] || 'folder';
+  const relativePath = f => (f.webkitRelativePath || f.name).split('/').slice(1).join('/') || f.name;
+  const files = [], shots = new Map();
+  for (const f of all) {
+    const path = relativePath(f), parts = path.split('/');
+    if (PO_RE.test(f.name)) files.push(makeFile(await f.text(), path, f.name, null));
+    else if (parts.length >= 2 && parts[parts.length - 2].toLowerCase() === SHOT_DIR) {
+      addShotFile(shots, parts.slice(0, -2).map(p => p + '/').join(''), f.name, f);
+    }
   }
   files.sort((a, b) => a.path.localeCompare(b.path));
+  await readShotManifests(shots);
+  attachShots(files, shots);
   setProject(root, files);
 }
 
@@ -734,6 +876,7 @@ function renderEditor(focus = false) {
       <span class="spacer"></span>
       <span class="muted">${esc(f.path)}</span>
     </div>
+    ${shotHtml(f, e)}
     ${e.msgctxt !== null ? `<div class="ctx">Context: <code>${esc(e.msgctxt)}</code></div>` : ''}
     <span class="field-label">Source${plural ? ' (singular)' : ''}</span>
     <div class="source">${richText(e.msgid)}</div>
@@ -758,6 +901,7 @@ function renderEditor(focus = false) {
     <span><kbd>Alt</kbd>+<kbd>C</kbd> copy source</span>
     ${deeplReady() ? '<span><kbd>Alt</kbd>+<kbd>T</kbd> DeepL</span>' : ''}
     <span><kbd>Alt</kbd>+<kbd>R</kbd> needs review</span>
+    ${f.shots ? '<span><kbd>Alt</kbd>+<kbd>P</kbd> show / hide screenshot</span>' : ''}
     <span>Click a <span class="tok">{0}</span> token to insert it</span>
   </div>`;
 
@@ -765,6 +909,7 @@ function renderEditor(focus = false) {
   tas.forEach(ta => { ta.value = e.msgstr[+ta.dataset.k]; autoGrow(ta); });
   state.lastTa = tas[0] || null;
   updateWarnings();
+  loadShot(f, e);
   if (focus && tas[0]) { tas[0].focus(); tas[0].setSelectionRange(tas[0].value.length, tas[0].value.length); }
 }
 
@@ -1208,7 +1353,10 @@ editor.addEventListener('click', ev => {
   else if (t.id === 'btnDeepl') deeplCurrent();
   else if (t.id === 'wOpen') openFolder();
   else if (t.id === 'wReopen') reopenLast();
+  else if (t.id === 'btnShots') toggleShots();
+  else if (t.id === 'shotOpen') openShot();
 });
+$('#dlgShot').addEventListener('click', () => $('#dlgShot').close());
 
 document.addEventListener('keydown', ev => {
   const ctrl = ev.ctrlKey || ev.metaKey;
@@ -1220,6 +1368,7 @@ document.addEventListener('keydown', ev => {
   else if (ev.altKey && ev.code === 'KeyC') { ev.preventDefault(); copySource(); }
   else if (ev.altKey && ev.code === 'KeyT') { ev.preventDefault(); deeplCurrent(); }
   else if (ev.altKey && ev.code === 'KeyR') { ev.preventDefault(); const e = curEntry(); if (e) setFuzzy(!e.flags.includes('fuzzy')); }
+  else if (ev.altKey && ev.code === 'KeyP') { ev.preventDefault(); toggleShots(); }
 });
 
 window.addEventListener('beforeunload', ev => {
