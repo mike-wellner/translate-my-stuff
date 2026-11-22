@@ -154,6 +154,16 @@ dialog.shot-dialog { width: auto; max-width: calc(100vw - 32px); max-height: cal
 dialog.shot-dialog img { display: block; max-width: calc(100vw - 32px); max-height: calc(100vh - 32px); }
 dialog.shot-dialog::backdrop { background: rgba(0,0,0,.75); }
 
+/* ---- Merge ---- */
+#dlgMerge { width: min(680px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; }
+.mg-pick { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mg-option { display: grid; gap: 4px; }
+.mg-option .opt:has(input:disabled) { cursor: default; opacity: .6; }
+.mg-list summary { cursor: pointer; font-size: 12px; color: var(--muted); margin-left: 12px; }
+.mg-list ul { margin: 4px 0 0; padding: 6px 10px 6px 28px; max-height: 180px; overflow: auto; font-size: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; }
+.mg-list li { overflow-wrap: anywhere; }
+.mg-list li + li { margin-top: 3px; }
+
 #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 8px 14px; border-radius: 8px; font-size: 13px; box-shadow: 0 6px 20px rgba(0,0,0,.2); max-width: calc(100vw - 32px); }
 #toast.error { background: var(--todo); color: #fff; }
 
@@ -182,6 +192,7 @@ body.no-project main { grid-template-columns: 1fr; }
   <span class="save-state" id="saveState"></span>
   <label class="toggle" id="autosaveWrap" title="Write changes to disk automatically"><input type="checkbox" id="autosave"> Autosave</label>
   <button id="btnSave" disabled>Save <kbd>Ctrl S</kbd></button>
+  <button id="btnMerge" hidden title="Keep the open file in step with another .po file">Merge…</button>
   <button id="btnOpen">Open folder…</button>
 </header>
 
@@ -246,6 +257,39 @@ body.no-project main { grid-template-columns: 1fr; }
       <div id="bulkText" class="muted" style="font-size:13px"></div>
     </div>
     <div class="dlg-actions"><button id="bulkCancel">Cancel</button><button class="primary" id="bulkStart">Translate</button></div>
+  </div>
+</dialog>
+
+<input type="file" id="mergeInput" accept=".po,.pot" hidden>
+<dialog id="dlgMerge">
+  <div class="dlg">
+    <h2>Merge with another .po file</h2>
+    <p class="muted" style="font-size:13px">Keeps <code id="mgOpenName"></code> in step with another file, for example the <code>.po</code> file in your game's project. Strings are matched by their source text and context.</p>
+    <div class="mg-pick">
+      <button id="mgChoose">Choose file…</button>
+      <button id="mgReuse" hidden></button>
+      <span class="muted" id="mgFileName" style="font-size:13px"></span>
+    </div>
+    <div class="dlg-status" id="mgStatus" hidden></div>
+    <div id="mgOptions" class="dlg" style="padding:0" hidden>
+      <div class="mg-option">
+        <label class="opt"><input type="checkbox" id="mgAdd" checked><span>Add new strings from the selected file<small id="mgAddInfo"></small></span></label>
+        <div id="mgAddList"></div>
+      </div>
+      <div class="mg-option">
+        <label class="opt"><input type="checkbox" id="mgRemove" checked><span>Remove strings the selected file no longer has<small id="mgRemoveInfo"></small></span></label>
+        <div id="mgRemoveList"></div>
+      </div>
+      <div class="mg-option">
+        <label class="opt"><input type="checkbox" id="mgPush" checked><span>Write translations and their changes back into the selected file<small id="mgPushInfo"></small></span></label>
+        <div id="mgPushList"></div>
+      </div>
+      <div class="mg-option">
+        <label class="opt"><input type="checkbox" id="mgRefresh" checked><span>Update “Used in” places and notes from the selected file<small id="mgRefreshInfo"></small></span></label>
+        <div id="mgRefreshList"></div>
+      </div>
+    </div>
+    <div class="dlg-actions"><button id="mgCancel">Cancel</button><button class="primary" id="mgApply" disabled>Merge</button></div>
   </div>
 </dialog>
 
@@ -373,6 +417,116 @@ function entryStatus(e) {
   return e.msgstr.some(s => !s) ? 'todo' : 'done';
 }
 // ---- end PO core ----
+
+// ============================================================================
+// ---- Merge core ----  (pure functions: compare two parsed .po files and merge them)
+// ============================================================================
+// "open" is the file translated in this editor, "selected" the file it is kept in step with (for example the .po
+// file in the game's project). Entries are matched by their gettext key: msgid, or msgctxt + "\u0004" + msgid.
+function entryKey(entry) {
+  return entry.msgctxt === null ? entry.msgid : entry.msgctxt + '\u0004' + entry.msgid;
+}
+
+function entriesByKey(file) {
+  const byKey = new Map();
+  for (const entry of file.entries) {
+    const key = entryKey(entry);
+    if (!byKey.has(key)) byKey.set(key, entry);
+  }
+  return byKey;
+}
+
+const isHeaderItem = item => item.kind === 'entry' && item.msgid === '' && item.msgctxt === null;
+const isFuzzy = entry => entry.flags.includes('fuzzy');
+const hasTranslation = entry => entry.msgstr.some(Boolean);
+const sameStrings = (first, second) => first.length === second.length && first.every((text, index) => text === second[index]);
+const sameTranslation = (first, second) => sameStrings(first.msgstr, second.msgstr) && isFuzzy(first) === isFuzzy(second);
+
+// What merging would change:
+// - added: entries of the selected file that the open file lacks, each with the open entry it follows
+//   (null when it comes before every shared entry);
+// - removed: entries of the open file that the selected file no longer has;
+// - pushed: shared entries translated in the open file whose translation or "needs review" state differs;
+// - refreshed: shared entries whose notes (#.) or places (#:) differ.
+// A translation that exists only in the selected file is never erased, only counted.
+function planMerge(open, selected) {
+  const openByKey = entriesByKey(open);
+  const selectedByKey = entriesByKey(selected);
+  const added = [], removed = [], pushed = [], refreshed = [];
+  let onlyTranslatedInSelected = 0;
+  let lastSharedOpenEntry = null;
+  for (const [key, selectedEntry] of selectedByKey) {
+    const openEntry = openByKey.get(key);
+    if (!openEntry) {
+      added.push({ selected: selectedEntry, after: lastSharedOpenEntry });
+      continue;
+    }
+    lastSharedOpenEntry = openEntry;
+    if (hasTranslation(openEntry) && !sameTranslation(openEntry, selectedEntry)) pushed.push({ open: openEntry, selected: selectedEntry });
+    else if (!hasTranslation(openEntry) && hasTranslation(selectedEntry)) onlyTranslatedInSelected++;
+    const notesDiffer = !sameStrings(openEntry.extracted, selectedEntry.extracted) || !sameStrings(openEntry.refs, selectedEntry.refs);
+    if (notesDiffer) refreshed.push({ open: openEntry, selected: selectedEntry });
+  }
+  for (const [key, openEntry] of openByKey) {
+    if (!selectedByKey.has(key)) removed.push(openEntry);
+  }
+  return { added, removed, pushed, refreshed, onlyTranslatedInSelected };
+}
+
+const isTranslatorComment = line => line.startsWith('#') && !/^#[.:,|~]/.test(line);
+
+// The lines of an entry with the notes (#.) and places (#:) of another entry; translator comments, flags,
+// previous source and the fields stay as they are.
+function linesWithNotesOf(lines, source) {
+  const firstField = lines.findIndex(line => !line.startsWith('#'));
+  const comments = lines.slice(0, firstField);
+  return [
+    ...comments.filter(isTranslatorComment),
+    ...source.lines.filter(line => line.startsWith('#.') || line.startsWith('#:')),
+    ...comments.filter(line => line.startsWith('#,') || line.startsWith('#|')),
+    ...lines.slice(firstField),
+  ];
+}
+
+// The text of the open file after the merge. options: { add, remove, refresh }. Kept entries stay where they are and
+// keep their lines (edited ones are rebuilt as when saving); a new entry goes after the entry it follows in the
+// selected file, or after the header.
+function mergedOpenText(open, plan, options) {
+  const removed = new Set(options.remove ? plan.removed : []);
+  const notesSourceOf = new Map(options.refresh ? plan.refreshed.map(pair => [pair.open, pair.selected]) : []);
+  const header = open.items.find(isHeaderItem) || null;
+  const insertedAfter = new Map();
+  if (options.add) {
+    for (const { selected, after } of plan.added) {
+      const anchor = after || header;
+      if (!insertedAfter.has(anchor)) insertedAfter.set(anchor, []);
+      insertedAfter.get(anchor).push(selected.lines);
+    }
+  }
+  const blocks = [...(insertedAfter.get(null) || [])];
+  for (const item of open.items) {
+    if (!removed.has(item)) {
+      let lines = item.dirty ? rebuildEntry(item) : item.lines;
+      if (notesSourceOf.has(item)) lines = linesWithNotesOf(lines, notesSourceOf.get(item));
+      blocks.push(lines);
+    }
+    blocks.push(...(insertedAfter.get(item) || []));
+  }
+  const body = blocks.map(lines => lines.join(open.eol)).join(open.eol + open.eol);
+  return (open.bom ? String.fromCharCode(0xFEFF) : '') + body + (open.finalNewline ? open.eol : '');
+}
+
+// Copies the translations of the open file, and whether they need review, into the selected file's entries.
+// serializePo(selected) then writes only those entries anew.
+function pushTranslations(plan) {
+  for (const { open, selected } of plan.pushed) {
+    selected.msgstr = selected.msgstr.map((_, form) => open.msgstr[form] ?? '');
+    const otherFlags = selected.flags.filter(flag => flag !== 'fuzzy');
+    selected.flags = isFuzzy(open) ? [...otherFlags, 'fuzzy'] : otherFlags;
+    selected.dirty = true;
+  }
+}
+// ---- end Merge core ----
 
 // ============================================================================
 // App
@@ -617,6 +771,7 @@ function setProject(dirName, files) {
   selectFile(last >= 0 ? last : 0);
   updateSaveUI();
   $('#btnBulk').hidden = !deeplReady();
+  $('#btnMerge').hidden = false;
 }
 
 // ---- Saving ----
@@ -1277,6 +1432,240 @@ $('#bulkStart').addEventListener('click', runBulk);
 $('#bulkCancel').addEventListener('click', closeBulk);
 $('#dlgBulk').addEventListener('cancel', ev => { if (deepl.bulk?.running) { ev.preventDefault(); deepl.bulk.ctrl.abort(); } });
 document.querySelectorAll('input[name=bulkScope]').forEach(r => r.addEventListener('change', updateBulkQuota));
+
+// ============================================================================
+// Merge (keep the open file in step with another .po file; see "Merge core")
+// ============================================================================
+const MERGE_LIST_LIMIT = 300;
+const merge = { lastHandle: null, handle: null, upload: null, name: '', text: '', plan: null };
+const mergeMemoryKey = f => `merge:${state.dirName}/${f.path}`;
+const isTemplateName = name => /\.pot$/i.test(name);
+const countOf = (n, one, many) => `${fmtNum(n)} ${n === 1 ? one : many}`;
+
+function setMergeStatus(message, bad = false) {
+  const box = $('#mgStatus');
+  box.hidden = !message;
+  box.classList.toggle('bad', bad);
+  box.textContent = message;
+}
+
+async function openMerge() {
+  const f = curFile();
+  if (!f) return;
+  Object.assign(merge, { lastHandle: null, handle: null, upload: null, name: '', text: '', plan: null });
+  $('#mgOpenName').textContent = f.path;
+  $('#mgFileName').textContent = 'No file chosen yet.';
+  $('#mgOptions').hidden = true;
+  $('#mgApply').disabled = true;
+  ['#mgAdd', '#mgRemove', '#mgPush', '#mgRefresh'].forEach(id => { $(id).checked = true; $(id).disabled = false; });
+  setMergeStatus('');
+  const reuse = $('#mgReuse');
+  reuse.hidden = true;
+  if (FS_API) {
+    try { merge.lastHandle = (await kv('readonly', mergeMemoryKey(f))) || null; } catch {}
+    if (merge.lastHandle) { reuse.textContent = `Use “${merge.lastHandle.name}” again`; reuse.hidden = false; }
+  }
+  $('#dlgMerge').showModal();
+}
+
+async function chooseMergeFile() {
+  if (!FS_API) { $('#mergeInput').click(); return; }
+  let handle;
+  try {
+    [handle] = await window.showOpenFilePicker({
+      id: 'merge-po',
+      types: [{ description: 'gettext files', accept: { 'text/x-gettext-translation': ['.po', '.pot'] } }],
+    });
+  } catch (err) { if (err.name !== 'AbortError') setMergeStatus(err.message, true); return; }
+  kv('readwrite', mergeMemoryKey(curFile()), handle).catch(() => {});
+  await loadMergeFile(handle, null);
+}
+
+async function reuseMergeFile() {
+  const handle = merge.lastHandle;
+  try {
+    // Ask for writing right away, so "write back" doesn't need a second prompt.
+    if ((await handle.requestPermission({ mode: 'readwrite' })) !== 'granted') { setMergeStatus(`Permission to open ${handle.name} was not granted.`, true); return; }
+    await loadMergeFile(handle, null);
+  } catch (err) { setMergeStatus(`Could not open ${handle.name}: ${err.message}`, true); }
+}
+
+async function readMergeText() {
+  const file = merge.handle ? await merge.handle.getFile() : merge.upload;
+  return file.text();
+}
+
+async function loadMergeFile(handle, upload) {
+  Object.assign(merge, { handle, upload, name: (handle || upload).name });
+  try { merge.text = await readMergeText(); }
+  catch (err) { setMergeStatus(`Could not read ${merge.name}: ${err.message}`, true); return; }
+  setMergeStatus('');
+  analyzeMerge();
+}
+
+function analyzeMerge() {
+  const selected = parsePo(merge.text);
+  merge.plan = planMerge(curFile(), selected);
+  renderMerge(selected);
+}
+
+function mergeListHtml(items, describe) {
+  if (!items.length) return '';
+  const shown = items.slice(0, MERGE_LIST_LIMIT).map(item => `<li>${describe(item)}</li>`).join('');
+  const hiddenCount = items.length - MERGE_LIST_LIMIT;
+  const more = hiddenCount > 0 ? `<li class="muted">… and ${fmtNum(hiddenCount)} more</li>` : '';
+  return `<details class="mg-list"><summary>Show ${items.length === 1 ? 'it' : 'them'}</summary><ul>${shown}${more}</ul></details>`;
+}
+const mergeSourceHtml = e => (e.msgctxt !== null ? `<span class="muted">[${esc(e.msgctxt)}]</span> ` : '') + esc(oneLine(e.msgid));
+function mergeTranslationHtml(e) {
+  const text = hasTranslation(e) ? `“${esc(oneLine(e.msgstr.filter(Boolean).join(' | ')))}”` : '<span class="muted">untranslated</span>';
+  return text + (isFuzzy(e) ? ' <span class="muted">(needs review)</span>' : '');
+}
+
+function renderMerge(selected) {
+  const f = curFile(), plan = merge.plan, template = isTemplateName(merge.name);
+  $('#mgFileName').textContent = `Selected: ${merge.name}${selected.language ? ` · ${selected.language}` : ''} · ${countOf(selected.entries.length, 'string', 'strings')}`;
+  if (!merge.handle) $('#mgFileName').textContent += ' · written back as a download';
+
+  const wrongLanguage = !template && selected.language && f.language && selected.language !== f.language;
+  if (wrongLanguage) setMergeStatus(`The selected file is for “${selected.language}”, but ${f.path} is for “${f.language}”. Check that you picked the right file.`, true);
+
+  const addedTranslated = plan.added.filter(pair => hasTranslation(pair.selected)).length;
+  $('#mgAddInfo').textContent = plan.added.length
+    ? `${countOf(plan.added.length, 'string', 'strings')} of the selected file ${plan.added.length === 1 ? 'is' : 'are'} not in ${f.path} yet`
+      + (addedTranslated ? `; ${fmtNum(addedTranslated)} come with the selected file's translation.` : '.')
+    : 'Nothing new.';
+  $('#mgAddList').innerHTML = mergeListHtml(plan.added, pair => mergeSourceHtml(pair.selected));
+
+  const removedTranslated = plan.removed.filter(hasTranslation).length;
+  $('#mgRemoveInfo').textContent = plan.removed.length
+    ? `${countOf(plan.removed.length, 'string', 'strings')} of ${f.path} ${plan.removed.length === 1 ? 'is' : 'are'} no longer in the selected file`
+      + (removedTranslated ? `; ${fmtNum(removedTranslated)} of them ${removedTranslated === 1 ? 'is' : 'are'} translated here and the translation is dropped.` : '.')
+    : 'Nothing to remove.';
+  $('#mgRemoveList').innerHTML = mergeListHtml(plan.removed, e => `${mergeSourceHtml(e)}<br>${mergeTranslationHtml(e)}`);
+
+  const pushBox = $('#mgPush');
+  pushBox.disabled = template;
+  if (template) pushBox.checked = false;
+  const onlyThere = plan.onlyTranslatedInSelected
+    ? ` ${countOf(plan.onlyTranslatedInSelected, 'string is', 'strings are')} translated only in the selected file and ${plan.onlyTranslatedInSelected === 1 ? 'stays' : 'stay'} as ${plan.onlyTranslatedInSelected === 1 ? 'it is' : 'they are'}.`
+    : '';
+  $('#mgPushInfo').textContent = template ? 'The selected file is a template (.pot): it holds no translations.'
+    : (plan.pushed.length
+      ? `${countOf(plan.pushed.length, 'translation', 'translations')} here ${plan.pushed.length === 1 ? 'differs' : 'differ'} from the selected file (text or “needs review”) and ${plan.pushed.length === 1 ? 'is' : 'are'} written into it.`
+      : 'The selected file already has every translation of this file.') + onlyThere;
+  $('#mgPushList').innerHTML = template ? '' : mergeListHtml(plan.pushed, pair =>
+    `${mergeSourceHtml(pair.open)}<br>${mergeTranslationHtml(pair.selected)} → ${mergeTranslationHtml(pair.open)}`);
+
+  $('#mgRefreshInfo').textContent = plan.refreshed.length
+    ? `${countOf(plan.refreshed.length, 'string has', 'strings have')} other places or developer notes in the selected file.`
+    : 'All places and notes are the same.';
+  $('#mgRefreshList').innerHTML = mergeListHtml(plan.refreshed, pair => mergeSourceHtml(pair.open));
+
+  $('#mgOptions').hidden = false;
+  updateMergeApply();
+}
+
+function mergeOptions() {
+  return {
+    add: $('#mgAdd').checked,
+    remove: $('#mgRemove').checked,
+    push: $('#mgPush').checked && !isTemplateName(merge.name),
+    refresh: $('#mgRefresh').checked,
+  };
+}
+
+function hasMergeWork(plan, options) {
+  return (options.add && plan.added.length > 0) || (options.remove && plan.removed.length > 0)
+    || (options.push && plan.pushed.length > 0) || (options.refresh && plan.refreshed.length > 0);
+}
+
+function updateMergeApply() {
+  $('#mgApply').disabled = !merge.plan || !hasMergeWork(merge.plan, mergeOptions());
+}
+
+async function writeMergeFile(text) {
+  if (merge.handle) {
+    const writable = await merge.handle.createWritable();
+    await writable.write(text);
+    await writable.close();
+  } else {
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(new Blob([text], { type: 'text/x-gettext-translation' }));
+    link.download = merge.name;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+  }
+  merge.text = text;
+}
+
+// Puts the merged text in place of the open file and saves it; the current entry stays selected if it is still there.
+async function replaceOpenFile(old, text) {
+  const currentKey = curEntry() ? entryKey(curEntry()) : null;
+  const file = makeFile(text, old.path, old.name, old.handle);
+  file.shots = old.shots;
+  file.editVersion = old.savedVersion + 1;   // differs from savedVersion, so saveFile writes it
+  file.savedVersion = old.savedVersion;
+  state.files[state.files.indexOf(old)] = file;
+  const kept = currentKey === null ? -1 : file.entries.findIndex(e => entryKey(e) === currentKey);
+  state.entryIdx = kept >= 0 ? kept : file.entries.findIndex(matches);
+  renderFiles();
+  renderList();
+  renderEditor();
+  await saveFile(file);
+}
+
+async function applyMerge() {
+  const open = curFile(), options = mergeOptions();
+  $('#mgApply').disabled = true;
+  try {
+    // The selected file may have changed since it was read (for example by the game's own tools).
+    const text = await readMergeText();
+    if (text !== merge.text) {
+      merge.text = text;
+      analyzeMerge();
+      setMergeStatus(`${merge.name} changed since it was read. The numbers above are up to date now: check them and merge again.`, true);
+      return;
+    }
+    if (options.push && merge.plan.pushed.length && merge.handle
+        && (await merge.handle.requestPermission({ mode: 'readwrite' })) !== 'granted') {
+      setMergeStatus(`No permission to write ${merge.name}.`, true);
+      return;
+    }
+    // Let a save of the open file that is under way finish first; unsaved edits are part of the merge.
+    clearTimeout(open.saveTimer);
+    await open.chain;
+
+    const selected = parsePo(merge.text);
+    const plan = planMerge(open, selected);
+    const done = [];
+    if (options.push && plan.pushed.length) {
+      pushTranslations(plan);
+      await writeMergeFile(serializePo(selected));
+      done.push(`${countOf(plan.pushed.length, 'translation', 'translations')} written to ${merge.name}`);
+    }
+    if (options.add && plan.added.length) done.push(`${countOf(plan.added.length, 'string', 'strings')} added`);
+    if (options.remove && plan.removed.length) done.push(`${countOf(plan.removed.length, 'string', 'strings')} removed`);
+    if (options.refresh && plan.refreshed.length) done.push(`places and notes of ${countOf(plan.refreshed.length, 'string', 'strings')} updated`);
+    const changesOpenFile = hasMergeWork(plan, { ...options, push: false });
+    if (changesOpenFile) await replaceOpenFile(open, mergedOpenText(open, plan, options));
+    $('#dlgMerge').close();
+    toast(done.length ? `Merged with ${merge.name}: ${done.join(', ')}.` : 'Nothing to merge.');
+  } catch (err) {
+    console.error(err);
+    setMergeStatus(`The merge failed: ${err.message}`, true);
+  } finally {
+    updateMergeApply();
+  }
+}
+
+$('#btnMerge').addEventListener('click', openMerge);
+$('#mgChoose').addEventListener('click', chooseMergeFile);
+$('#mgReuse').addEventListener('click', reuseMergeFile);
+$('#mergeInput').addEventListener('change', ev => { const file = ev.target.files[0]; if (file) loadMergeFile(null, file); ev.target.value = ''; });
+$('#mgCancel').addEventListener('click', () => $('#dlgMerge').close());
+$('#mgApply').addEventListener('click', applyMerge);
+['#mgAdd', '#mgRemove', '#mgPush', '#mgRefresh'].forEach(id => $(id).addEventListener('change', updateMergeApply));
 
 // ---- Events ----
 $('#btnOpen').addEventListener('click', openFolder);

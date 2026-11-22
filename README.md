@@ -50,6 +50,29 @@ The optional `screenshots.json` says how the text appears in each picture, shown
 
 `kind` is `whole` (the outlined text is this entry), `part` (the entry is part of the outlined text) or `tooltip` (the entry is the tooltip of the outlined element). 
 
+## Merge
+
+When you translate a copy of a `.po` file (for example `projects/my-game/de.po`, next to its screenshots), the original
+in the game's project keeps changing: new strings come in, old ones go away. **Merge…** in the header keeps the open
+file and the original in step.
+
+1. Open the copy, click **Merge…** and pick the other file (for example `locale/de.po` in the game's project). The page
+   remembers your choice per file, so next time it's **Use “de.po” again**.
+2. The dialog shows what each option would change, with the strings involved under **Show them**:
+   - **Add new strings** that the selected file has and the open file doesn't. They come with the selected file's
+     translation if it has one, and are placed where they stand in the selected file.
+   - **Remove strings** that the selected file no longer has. The dialog says how many of them are translated here.
+   - **Write translations back** into the selected file: every entry translated here whose text or “needs review”
+     state differs. A translation that exists only in the selected file is never erased.
+   - **Update “Used in” places and notes** (`#:` and `#.` lines) from the selected file. Translator comments, flags and
+     translations stay.
+3. **Merge** writes both files. Strings are matched by `msgctxt` + `msgid`. Entries that don't change keep their
+   lines byte for byte, and unsaved edits in the open file are included. If the selected file changed since it was
+   read, the dialog updates its numbers instead of merging.
+
+A `.pot` template can be selected too, to add and remove strings; it has no translations to write back to. Without the
+File System Access API (Firefox, Safari), the selected file is written back as a download.
+
 ## DeepL
 
 1. Copy `.env.example` to `.env` and set `DEEPL_API_KEY=` to your key
