@@ -29,6 +29,8 @@ when the translation is missing placeholders or has whitespace at the start or e
 
 Put a folder named `screenshots` next to a `.po` file, with one picture per entry, and the editor shows the picture of
 the current entry above its source text (click it to enlarge, <kbd>Alt</kbd>+<kbd>P</kbd> to hide or show it).
+A second row of tabs under the status tabs then lists only the strings **with screenshot** or **without** one; it
+combines with the status tabs and the search, and each row counts what the other one leaves.
 
 ```
 projects/project-name/

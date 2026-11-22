@@ -206,6 +206,11 @@ body.no-project main { grid-template-columns: 1fr; }
         <button data-filter="done">Done<span class="n"></span></button>
         <button data-filter="all">All<span class="n"></span></button>
       </div>
+      <div class="tabs" id="shotTabs" hidden title="Only strings with or without a screenshot">
+        <button data-shots="any">Any<span class="n"></span></button>
+        <button data-shots="with">With screenshot<span class="n"></span></button>
+        <button data-shots="without">Without<span class="n"></span></button>
+      </div>
       <input id="search" type="search" placeholder="Search source, translation, file ref…  (Ctrl K)">
       <button class="bulk" id="btnBulk" hidden>Translate untranslated with DeepL…</button>
     </div>
@@ -540,6 +545,7 @@ const state = {
   filter: lsGet('tms:filter') || 'todo', search: '',
   autosave: FS_API && lsGet('tms:autosave') !== '0', rowEls: new Map(), lastTa: null,
   showShots: lsGet('tms:shots') !== '0',
+  shotFilter: lsGet('tms:shotFilter') || 'any',   // 'any', 'with' or 'without' a screenshot
 };
 
 const curFile = () => state.files[state.fileIdx];
@@ -829,8 +835,17 @@ function updateSaveUI() {
 }
 
 // ---- Filtering / navigation ----
+const hasShot = (f, e) => f.shots.pictures.has(shotHash(e));
+// The screenshot filter only applies to files that have screenshots.
+function passesShotFilter(f, e) {
+  if (state.shotFilter === 'any' || !f?.shots) return true;
+  return hasShot(f, e) === (state.shotFilter === 'with');
+}
+const shotFilterActive = () => state.shotFilter !== 'any' && !!curFile()?.shots;
+
 function matches(e) {
   if (state.filter !== 'all' && entryStatus(e) !== state.filter) return false;
+  if (!passesShotFilter(curFile(), e)) return false;
   if (!state.search) return true;
   const q = state.search.toLowerCase();
   return [e.msgid, e.msgidPlural, e.msgctxt, ...e.msgstr, ...e.refs].some(s => s && s.toLowerCase().includes(q));
@@ -870,7 +885,8 @@ function go(dir) {
       return;
     }
   }
-  toast(state.filter === 'todo' && !state.search ? 'No untranslated entries left in this file 🎉' : 'No other entries match this filter.');
+  const plainUntranslatedFilter = state.filter === 'todo' && !state.search && !shotFilterActive();
+  toast(plainUntranslatedFilter ? 'No untranslated entries left in this file 🎉' : 'No other entries match this filter.');
 }
 
 function accept() {
@@ -904,9 +920,14 @@ function setFuzzy(on) {
 }
 
 // ---- Rendering ----
-function counts(f) {
-  const c = { todo: 0, fuzzy: 0, done: 0, all: f.entries.length };
-  for (const e of f.entries) c[entryStatus(e)]++;
+// Entries per status; with onlyShotFilter, only those that pass the screenshot filter.
+function counts(f, onlyShotFilter = false) {
+  const c = { todo: 0, fuzzy: 0, done: 0, all: 0 };
+  for (const e of f.entries) {
+    if (onlyShotFilter && !passesShotFilter(f, e)) continue;
+    c[entryStatus(e)]++;
+    c.all++;
+  }
   return c;
 }
 
@@ -923,12 +944,24 @@ function renderFiles() {
   renderTabs();
 }
 
+// The status tabs count the entries that pass the screenshot filter, the screenshot tabs those of the current status.
 function renderTabs() {
   const f = curFile();
-  const c = f ? counts(f) : {};
+  const c = f ? counts(f, true) : {};
   document.querySelectorAll('#tabs button').forEach(b => {
     b.classList.toggle('on', b.dataset.filter === state.filter);
     b.querySelector('.n').textContent = f ? c[b.dataset.filter] : '';
+  });
+
+  const shotTabs = $('#shotTabs');
+  shotTabs.hidden = !f?.shots;
+  if (shotTabs.hidden) return;
+  const inStatus = f.entries.filter(e => state.filter === 'all' || entryStatus(e) === state.filter);
+  const withShot = inStatus.filter(e => hasShot(f, e)).length;
+  const shotCounts = { any: inStatus.length, with: withShot, without: inStatus.length - withShot };
+  shotTabs.querySelectorAll('button').forEach(b => {
+    b.classList.toggle('on', b.dataset.shots === state.shotFilter);
+    b.querySelector('.n').textContent = shotCounts[b.dataset.shots];
   });
 }
 
@@ -1007,7 +1040,7 @@ function renderEditor(focus = false) {
   if (!f) { box.innerHTML = welcomeHtml(); return; }
   if (!e) {
     const review = counts(f).fuzzy;
-    box.innerHTML = `<div class="empty">${state.filter !== 'todo' || state.search ? 'Nothing matches this filter.'
+    box.innerHTML = `<div class="empty">${state.filter !== 'todo' || state.search || shotFilterActive() ? 'Nothing matches this filter.'
       : review ? `Nothing untranslated left. ${fmtNum(review)} entr${review === 1 ? 'y needs' : 'ies need'} review — open the <b>Review</b> tab.`
       : 'Everything in this file is translated 🎉'}</div>`;
     return;
@@ -1694,6 +1727,14 @@ $('#tabs').addEventListener('click', ev => {
   if (!b) return;
   state.filter = b.dataset.filter;
   lsSet('tms:filter', state.filter);
+  applyFilter();
+});
+
+$('#shotTabs').addEventListener('click', ev => {
+  const b = ev.target.closest('button');
+  if (!b) return;
+  state.shotFilter = b.dataset.shots;
+  lsSet('tms:shotFilter', state.shotFilter);
   applyFilter();
 });
 
