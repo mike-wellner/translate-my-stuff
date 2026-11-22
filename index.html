@@ -91,6 +91,8 @@ main > section { min-height: 0; overflow: auto; }
 .ctx code, .note code { font: 12px ui-monospace, Consolas, monospace; background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
 .note { font-size: 13px; color: var(--muted); margin-top: 8px; }
 .note b { color: var(--text); font-weight: 600; }
+.note-empty { opacity: .6; }
+.note-separator { margin: 0 8px; opacity: .6; }
 textarea { width: 100%; min-height: 64px; resize: vertical; padding: 10px 12px; font-size: 17px; line-height: 1.5; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); }
 textarea:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
 .warnings:empty { display: none; }
@@ -1051,8 +1053,14 @@ function renderEditor(focus = false) {
     const ns = ex[k]?.length ? ` · n = ${ex[k].join(', ')}${ex[k].length >= 4 ? '…' : ''}` : '';
     return `Form ${k + 1}${ns}`;
   };
+  // The Note row is always shown as a single line (several notes joined by a separator, a dash when
+  // there is none) so the editor keeps its height from entry to entry and the action buttons stay in place.
+  const noteSeparator = '<span class="note-separator">·</span>';
+  const developerNoteText = e.extracted.length
+    ? e.extracted.map(t => esc(t)).join(noteSeparator)
+    : '<span class="note-empty">—</span>';
   const notes = [
-    ...e.extracted.map(t => `<div class="note"><b>Note:</b> ${esc(t)}</div>`),
+    `<div class="note"><b>Note:</b> ${developerNoteText}</div>`,
     ...e.comments.filter(Boolean).map(t => `<div class="note"><b>Translator comment:</b> ${esc(t)}</div>`),
     e.prev.length ? `<div class="note"><b>Previous source:</b> <code>${esc(e.prev.join(' '))}</code></div>` : '',
   ].join('');
